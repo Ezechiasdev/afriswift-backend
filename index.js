@@ -31,3 +31,6 @@ app.get("/", (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Serveur AfriSwift backend démarré sur le port ${PORT}`);
 });
+
+// On me dit que je suis sur la branche codeIniAvecFADAPAY
+// Je vais donc voir ce qui se passera dans visual studio code si je changait de branche 
