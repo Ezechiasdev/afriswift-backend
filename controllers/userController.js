@@ -10,6 +10,10 @@ const { Keypair, TransactionBuilder, Operation, Asset, Networks } = StellarSdk;
 // Accédez à Server via StellarSdk.Horizon
 const Server = StellarSdk.Horizon.Server; // <-- C'est ça la clé !
 
+// debugage
+console.log("Valeur de process.env.HORIZON_URL :", process.env.HORIZON_URL); 
+// fin debugage
+
 const User = require("../models/User");
 
 // --- Configurations Stellar ---

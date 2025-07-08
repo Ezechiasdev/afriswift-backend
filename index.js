@@ -1,9 +1,9 @@
 const express = require("express");
 const mongoose = require("mongoose");
-const userRoutes = require("./routes/userRoutes");
-const depotRoutes = require("./routes/depotRoutes");
-const transactionRoutes = require("./routes/transactionRoutes"); 
 require("dotenv").config();
+const userRoutes = require("./routes/userRoutes");
+//const depotRoutes = require("./routes/depotRoutes");
+const transactionRoutes = require("./routes/transactionRoutes"); 
 
 const app = express();
 const PORT = process.env.PORT || 3000;
