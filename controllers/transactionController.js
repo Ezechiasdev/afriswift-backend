@@ -1,12 +1,12 @@
-//Petite correction pour essayer
-const StellarSdk = require("@stellar/stellar-sdk");
-const { Keypair, TransactionBuilder, Operation, Asset, Networks } = StellarSdk;
-const Server = StellarSdk.Server;
-
-
 // controllers/transactionController.js
 
 // Une ligne enlevé ici à remplacer
+// Nouveau et CORRECT pour stellar-sdk@13.3.0:
+const StellarSdk = require("@stellar/stellar-sdk");
+const { Keypair, TransactionBuilder, Operation, Asset, Networks } = StellarSdk;
+// Accédez à Server via StellarSdk.Horizon
+const Server = StellarSdk.Horizon.Server; // <-- C'est ça la clé !
+// Après modif
 const axios = require("axios"); // Pour faire des requêtes HTTP aux APIs de TestAnchor
 const User = require("../models/User");
 const mongoose = require("mongoose"); // Pour les transactions MongoDB
