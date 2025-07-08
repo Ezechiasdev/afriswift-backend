@@ -1,59 +1,96 @@
+// models/User.js
+
 const mongoose = require("mongoose");
 
 const userSchema = new mongoose.Schema({
-  nomComplet: { type: String, required: true },
-  email: { type: String, unique: true, required: true },
-  telephone: { type: String, required: true },
-  pays: { type: String, required: true },
-  numeroCompte: { type: String, unique: true, required: true },
-  motDePasseHache: { type: String, required: true },
+  nomComplet: {
+    type: String,
+    required: true,
+    trim: true,
+  },
+  email: {
+    type: String,
+    required: true,
+    unique: true,
+    trim: true,
+    lowercase: true,
+  },
+  telephone: {
+    type: String,
+    required: true,
+    unique: true,
+    trim: true,
+  },
+  pays: {
+    type: String,
+    required: true,
+  },
+  numeroCompte: {
+    type: String,
+    required: true,
+    unique: true,
+  },
+  motDePasseHache: {
+    type: String,
+    required: true,
+    select: false,
+  },
   compteStellar: {
-    clePublique: { type: String, required: true },
-    cleSecrete: { type: String, required: true, select: false } // Ajouté ou mis à jour
+    clePublique: {
+      type: String,
+      required: true,
+      unique: true,
+    },
+    cleSecrete: {
+      type: String,
+      required: true,
+      unique: true,
+      select: false, // Très important : ne pas renvoyer la clé secrète par défaut
+    },
   },
-  solde: { // Ajouté
-    USD: { type: Number, default: 0 },
+  solde: {
+    // Il est préférable de stocker les soldes par code d'actif, surtout pour les actifs de l'anchor
+    // Cela permet de gérer XLM, SRT, USDC, XOF (si un jour), etc.
     XLM: { type: Number, default: 0 },
-    NGN: { type: Number, default: 0 },
-    GHS: { type: Number, default: 0 }
+    SRT: { type: Number, default: 0 }, // Nouveau champ pour l'actif de TestAnchor
+    USDC: { type: Number, default: 0 }, // Si vous décidez d'utiliser USDC de TestAnchor
+    // XOF: { type: Number, default: 0 }, // Pour le futur si vous intégrez une vraie anchor XOF
+    // GHS: { type: Number, default: 0 }, // Pour le futur si vous intégrez une vraie anchor GHS
   },
-  kyc: { // Ajouté
-    etat: { type: String, enum: ["en_attente", "approuvé", "rejeté"], default: "en_attente" },
-    documents: { type: [String], default: [] },
-    dateVerification: { type: Date }
+  kyc: {
+    etat: {
+      type: String,
+      enum: ["en attente", "approuvé", "rejeté"],
+      default: "en attente",
+    },
+    documents: [
+      {
+        type: String, // URL vers le document stocké
+      },
+    ],
+    dateVerification: {
+      type: Date,
+    },
   },
-  statusCompte: { type: String, enum: ["actif", "bloqué"], default: "actif" }, // Ajouté
-  dateCreation: { type: Date, default: Date.now }, // Ajouté
-  dateMiseAJour: { type: Date, default: Date.now } // Ajouté
+  // Optionnel : un champ pour savoir quelles trustlines l'utilisateur a configurées
+  trustlines: [{
+    assetCode: String,
+    issuer: String,
+    established: { type: Boolean, default: false }
+  }],
+  statusCompte: {
+    type: String,
+    enum: ["actif", "inactif", "bloqué"],
+    default: "actif",
+  },
+  dateCreation: {
+    type: Date,
+    default: Date.now,
+  },
+  dateMiseAJour: {
+    type: Date,
+    default: Date.now,
+  },
 });
-
-// Optionnel: utiliser { timestamps: true } pour dateCreation et dateMiseAJour
-// const userSchema = new mongoose.Schema({
-//   nomComplet: { type: String, required: true },
-//   email: { type: String, unique: true, required: true },
-//   telephone: { type: String, required: true },
-//   pays: { type: String, required: true },
-//   numeroCompte: { type: String, unique: true, required: true },
-//   motDePasseHache: { type: String, required: true },
-//   compteStellar: {
-//     clePublique: { type: String, required: true },
-//     cleSecrete: { type: String, required: true, select: false }
-//   },
-//   solde: {
-//     USD: { type: Number, default: 0 },
-//     XLM: { type: Number, default: 0 },
-//     NGN: { type: Number, default: 0 },
-//     GHS: { type: Number, default: 0 }
-//   },
-//   kyc: {
-//     etat: { type: String, enum: ["en_attente", "approuvé", "rejeté"], default: "en_attente" },
-//     documents: { type: [String], default: [] },
-//     dateVerification: { type: Date }
-//   },
-//   statusCompte: { type: String, enum: ["actif", "bloqué"], default: "actif" }
-// }, {
-//   timestamps: true // Gère automatiquement createdAt et updatedAt
-// });
-
 
 module.exports = mongoose.model("User", userSchema);

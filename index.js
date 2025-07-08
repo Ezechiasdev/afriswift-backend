@@ -2,10 +2,8 @@ const express = require("express");
 const mongoose = require("mongoose");
 const userRoutes = require("./routes/userRoutes");
 const depotRoutes = require("./routes/depotRoutes");
+const transactionRoutes = require("./routes/transactionRoutes"); 
 require("dotenv").config();
-
-// 🔐 FedaPay SDK setup
-require('./fedapay.config');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -20,7 +18,7 @@ mongoose.connect(process.env.MONGO_URI)
 
 // Routes
 app.use("/api/users", userRoutes);
-app.use("/api/depot", depotRoutes); // 🚀 Nouvelle route ajoutée ici
+app.use("/api/transactions", transactionRoutes);
 
 app.get("/", (req, res) => {
   res.send("✅ API AfriSwift fonctionne !");
@@ -31,3 +29,5 @@ app.get("/", (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Serveur AfriSwift backend démarré sur le port ${PORT}`);
 });
+
+

@@ -1,53 +1,77 @@
+// controllers/userController.js
+
 const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken"); // Ligne ajoutée pour le JWT 
-const { Keypair } = require("@stellar/stellar-sdk");
+const jwt = require("jsonwebtoken");
+const { Keypair, Server, TransactionBuilder, Operation, Asset, Networks } = require("@stellar/stellar-sdk");
 const User = require("../models/User");
 
-// Génère un numéro de compte unique
+// --- Configurations Stellar ---
+const STELLAR_SERVER = new Server(process.env.HORIZON_URL);
+const STELLAR_NETWORK_PASSPHRASE = process.env.STELLAR_NETWORK === 'public' ? Networks.PUBLIC : Networks.TESTNET;
+
+// Informations de l'actif SRT de TestAnchor
+const TEST_ANCHOR_SRT_ASSET_CODE = process.env.TEST_ANCHOR_ASSET_CODE;
+const TEST_ANCHOR_SRT_ASSET_ISSUER = process.env.TEST_ANCHOR_ASSET_ISSUER;
+const TEST_ANCHOR_SRT_ASSET = new Asset(TEST_ANCHOR_SRT_ASSET_CODE, TEST_ANCHOR_SRT_ASSET_ISSUER);
+
+// --- Fonctions utilitaires (maintenues) ---
 function genererNumeroCompte() {
-  const prefix = "AFS"; // AfriSwift
-  const random = Math.floor(100000 + Math.random() * 900000); // 6 chiffres aléatoires
+  const prefix = "AFS";
+  const random = Math.floor(100000 + Math.random() * 900000);
   return `${prefix}${random}`;
 }
 
-// Détermine la devise du pays
-function getDeviseParPays(pays) {
-  const mapping = {
-    "Bénin": "XOF",
-    "Nigéria": "NGN",
-    "Ghana": "GHS",
-    "États-Unis": "USD"
-  };
-  // Ajout d'une gestion plus robuste pour les devises.
-  // Note: Si vous avez plus de devises, une base de données ou un fichier de configuration serait mieux.
-  return mapping[pays] || "USD"; // USD par défaut
+// --- Nouvelle fonction utilitaire pour établir une trustline ---
+async function establishTrustline(userKeypair, asset) {
+    try {
+        const account = await STELLAR_SERVER.loadAccount(userKeypair.publicKey());
+        const transaction = new TransactionBuilder(account, {
+            fee: STELLAR_SERVER.fetchBaseFee(),
+            networkPassphrase: STELLAR_NETWORK_PASSPHRASE
+        })
+        .addOperation(Operation.changeTrust({
+            asset: asset,
+            limit: "922337203685.4775807" // Montant maximum (valeur par défaut)
+        }))
+        .setTimeout(30)
+        .build();
+
+        transaction.sign(userKeypair);
+        const response = await STELLAR_SERVER.submitTransaction(transaction);
+        console.log(`Trustline pour ${asset.code} établie pour ${userKeypair.publicKey()}:`, response.id);
+        return true;
+    } catch (error) {
+        console.error(`Erreur lors de l'établissement de la trustline pour ${asset.code} pour ${userKeypair.publicKey()}:`, error);
+        // Gérer les erreurs spécifiques, par exemple, si la trustline existe déjà
+        if (error.response && error.response.data && error.response.data.extras &&
+            error.response.data.extras.result_codes &&
+            error.response.data.extras.result_codes.operations &&
+            error.response.data.extras.result_codes.operations[0] === 'op_change_trust_malformed') {
+                console.warn(`Trustline pour ${asset.code} pourrait déjà exister ou est malformée.`);
+                return true; // Considérer comme succès si déjà existante
+        }
+        return false;
+    }
 }
 
-// Inscription d'un utilisateur
+// --- Inscription d'un utilisateur ---
 exports.inscription = async (req, res) => {
   try {
     const { nomComplet, email, telephone, pays, motDePasse } = req.body;
 
-    // Vérifie si l'utilisateur existe déjà
     const utilisateurExistant = await User.findOne({ email });
     if (utilisateurExistant) {
       return res.status(400).json({ message: "Cet email est déjà utilisé." });
     }
 
-    // Hachage du mot de passe
     const motDePasseHache = await bcrypt.hash(motDePasse, 10);
 
-    // Génération des clés Stellar
     const keypair = Keypair.random();
     const clePublique = keypair.publicKey();
     const cleSecrete = keypair.secret();
 
-    // Génération du numéro de compte
     const numeroCompte = genererNumeroCompte();
 
-    // Création d'une nouvelle instance d'utilisateur
-    // Mongoose appliquera ici les valeurs par défaut pour 'solde', 'kyc' et 'statusCompte'
-    // car nous créons une instance du modèle avant de la sauvegarder.
     const nouvelUtilisateur = new User({
       nomComplet,
       email,
@@ -59,180 +83,182 @@ exports.inscription = async (req, res) => {
         clePublique,
         cleSecrete
       },
-      // Pas besoin d'initialiser solde ici, Mongoose utilisera les defaults
-      // Pas besoin d'initialiser kyc ici, Mongoose utilisera les defaults
-      // Pas besoin d'initialiser statusCompte ici, Mongoose utilisera les defaults
-      // dateCreation et dateMiseAJour seront aussi gérées par default: Date.now
+      solde: {
+        XLM: 0, // Initialisé à 0, sera financé par Friendbot
+        SRT: 0, // Initialisé à 0
+        USDC: 0 // Si vous utilisez USDC
+      },
+      kyc: { etat: "en attente" }, // Etat KYC initial
+      statusCompte: "actif", // Statut initial du compte
+      dateCreation: Date.now(),
+      dateMiseAJour: Date.now(),
     });
 
-    // Sauvegarde de l'utilisateur dans la base de données
+    // Sauvegarde de l'utilisateur dans la base de données (important avant le Friendbot)
     await nouvelUtilisateur.save();
 
-    // Détermination de la devise du pays
-    const deviseUtilisateur = getDeviseParPays(nouvelUtilisateur.pays);
-    const soldeDansLaDevise = nouvelUtilisateur.solde[deviseUtilisateur] || 0;
+    // === 1. Financement du compte Stellar via Friendbot (Testnet uniquement) ===
+    // Pour activer le compte et lui donner un solde initial de XLM
+    try {
+        const friendbotResponse = await fetch(`https://friendbot.stellar.org/?addr=${clePublique}`);
+        const friendbotData = await friendbotResponse.json();
+        console.log("Friendbot response for new user:", friendbotData);
+    } catch (friendbotError) {
+        console.error("Erreur lors du financement du compte Stellar via Friendbot :", friendbotError);
+        // Si Friendbot échoue, le compte Stellar de l'utilisateur n'aura pas de XLM.
+        // Cela bloquera les transactions ou les trustlines sans XLM.
+        // Vous pourriez vouloir bloquer l'inscription ici ou la marquer comme "en attente de financement".
+        return res.status(500).json({ message: "Erreur lors du financement initial du compte Stellar. Veuillez réessayer plus tard." });
+    }
 
-    // Création de l'objet à envoyer au frontend
+    // === 2. Établir la trustline pour l'actif SRT de TestAnchor ===
+    // C'est crucial pour que l'utilisateur puisse détenir cet actif
+    const userKeypair = Keypair.fromSecret(cleSecrete); // Recréer le Keypair
+    const trustlineEstablished = await establishTrustline(userKeypair, TEST_ANCHOR_SRT_ASSET);
+
+    if (!trustlineEstablished) {
+        // Gérer le cas où la trustline n'a pas pu être établie
+        // Peut-être supprimer l'utilisateur créé ou le marquer comme non-opérationnel
+        console.error("Impossible d'établir la trustline pour SRT. L'utilisateur pourrait ne pas pouvoir recevoir d'actifs de l'Anchor.");
+        // Pour l'MVP, on continue mais c'est un point d'attention.
+    } else {
+        // Mettre à jour la base de données pour refléter la trustline établie
+        nouvelUtilisateur.trustlines.push({
+            assetCode: TEST_ANCHOR_SRT_ASSET_CODE,
+            issuer: TEST_ANCHOR_SRT_ASSET_ISSUER,
+            established: true
+        });
+        await nouvelUtilisateur.save(); // Sauvegarder la mise à jour
+    }
+
+    // Préparer la réponse (sans la clé secrète)
     const utilisateurAEnvoyer = {
+      _id: nouvelUtilisateur._id,
       nomComplet: nouvelUtilisateur.nomComplet,
       email: nouvelUtilisateur.email,
       telephone: nouvelUtilisateur.telephone,
       pays: nouvelUtilisateur.pays,
       numeroCompte: nouvelUtilisateur.numeroCompte,
-      devise: deviseUtilisateur,
-      solde: soldeDansLaDevise,
-      kyc: {
-        etat: nouvelUtilisateur.kyc.etat,
-        documents: nouvelUtilisateur.kyc.documents,
-        dateVerification: nouvelUtilisateur.kyc.dateVerification
-      },
+      solde: nouvelUtilisateur.solde, // Renvoie tous les soldes maintenant
+      kyc: nouvelUtilisateur.kyc,
       statusCompte: nouvelUtilisateur.statusCompte,
-      dateCreation: nouvelUtilisateur.dateCreation, // Inclus pour la cohérence
-      dateMiseAJour: nouvelUtilisateur.dateMiseAJour // Inclus pour la cohérence
+      dateCreation: nouvelUtilisateur.dateCreation,
+      dateMiseAJour: nouvelUtilisateur.dateMiseAJour,
+      compteStellar: {
+          clePublique: nouvelUtilisateur.compteStellar.clePublique
+      },
+      trustlines: nouvelUtilisateur.trustlines // Inclure les trustlines pour vérification
     };
 
     res.status(201).json({
-      message: "Inscription réussie",
+      message: "Inscription réussie. Compte Stellar financé et trustline SRT établie.",
       utilisateur: utilisateurAEnvoyer
     });
 
   } catch (erreur) {
     console.error("Erreur d'inscription :", erreur);
-    // Gérer les erreurs spécifiques, par exemple, si numeroCompte n'est pas unique
-    if (erreur.code === 11000) { // Erreur de duplicata MongoDB
-        return res.status(400).json({ message: "Le numéro de compte généré est déjà utilisé. Veuillez réessayer." });
+    if (erreur.code === 11000) {
+        return res.status(400).json({ message: "Cet email ou numéro de compte est déjà utilisé." });
     }
     res.status(500).json({ message: "Erreur lors de l'inscription." });
   }
 };
 
-// Nouvelle fonction de connexion
+
+// --- Connexion et Profil (ajuster pour renvoyer tous les soldes) ---
 exports.connexion = async (req, res) => {
-  try {
-    const { email, motDePasse } = req.body;
+    try {
+        const { email, motDePasse } = req.body;
 
-    // 1. Trouver l'utilisateur par email
-    // On utilise .select('+motDePasseHache') car nous avons mis select: false dans le schéma.
-    const utilisateur = await User.findOne({ email }).select('+motDePasseHache +compteStellar.cleSecrete');
+        const utilisateur = await User.findOne({ email }).select('+motDePasseHache +compteStellar.cleSecrete');
 
-    if (!utilisateur) {
-      return res.status(400).json({ message: "Identifiants invalides." });
-    }
-
-    // 2. Comparer le mot de passe fourni avec le mot de passe haché
-    const estMotDePasseValide = await bcrypt.compare(motDePasse, utilisateur.motDePasseHache);
-
-    if (!estMotDePasseValide) {
-      return res.status(400).json({ message: "Identifiants invalides." });
-    }
-
-    // 3. Vérifier le statut du compte (optionnel mais recommandé pour la sécurité)
-    if (utilisateur.statusCompte === "bloqué") {
-      return res.status(403).json({ message: "Votre compte est bloqué. Veuillez contacter le support." });
-    }
-
-    // 4. Générer un Token Web JSON (JWT)
-    // Le payload du token doit contenir des informations non sensibles mais utiles pour identifier l'utilisateur.
-    // NE PAS inclure le motDePasseHache ou la clé secrète Stellar ici !
-    const token = jwt.sign(
-      {
-        id: utilisateur._id,
-        email: utilisateur.email,
-        numeroCompte: utilisateur.numeroCompte,
-        // Vous pouvez ajouter d'autres infos pertinentes mais NON SENSIBLES
-        // par exemple, le statut KYC, le pays, etc.
-        kycEtat: utilisateur.kyc.etat,
-        statusCompte: utilisateur.statusCompte
-      },
-      process.env.JWT_SECRET, // Utilisez une variable d'environnement pour la clé secrète JWT
-      { expiresIn: "1h" } // Le token expire après 1 heure
-    );
-
-    // Détermination de la devise du pays
-    const deviseUtilisateur = getDeviseParPays(utilisateur.pays);
-    const soldeDansLaDevise = utilisateur.solde[deviseUtilisateur] || 0;
-
-    // 5. Renvoyer le token et les informations de l'utilisateur (sans le mot de passe haché)
-    res.status(200).json({
-      message: "Connexion réussie",
-      token, // Le token d'authentification
-      utilisateur: {
-        _id: utilisateur._id,
-        nomComplet: utilisateur.nomComplet,
-        email: utilisateur.email,
-        telephone: utilisateur.telephone,
-        pays: utilisateur.pays,
-        numeroCompte: utilisateur.numeroCompte,
-        devise: deviseUtilisateur,
-        solde: soldeDansLaDevise,
-        kyc: {
-            etat: utilisateur.kyc.etat,
-            documents: utilisateur.kyc.documents,
-            dateVerification: utilisateur.kyc.dateVerification
-        },
-        statusCompte: utilisateur.statusCompte,
-        dateCreation: utilisateur.dateCreation,
-        dateMiseAJour: utilisateur.dateMiseAJour,
-        compteStellar: { // On peut renvoyer la clé publique Stellar si besoin côté client
-            clePublique: utilisateur.compteStellar.clePublique
+        if (!utilisateur) {
+            return res.status(400).json({ message: "Identifiants invalides." });
         }
-      }
-    });
 
-  } catch (erreur) {
-    console.error("Erreur de connexion :", erreur);
-    res.status(500).json({ message: "Erreur lors de la connexion." });
-  }
+        const estMotDePasseValide = await bcrypt.compare(motDePasse, utilisateur.motDePasseHache);
+
+        if (!estMotDePasseValide) {
+            return res.status(400).json({ message: "Identifiants invalides." });
+        }
+
+        if (utilisateur.statusCompte === "bloqué") {
+            return res.status(403).json({ message: "Votre compte est bloqué. Veuillez contacter le support." });
+        }
+
+        const token = jwt.sign(
+            {
+                id: utilisateur._id,
+                email: utilisateur.email,
+                numeroCompte: utilisateur.numeroCompte,
+                kycEtat: utilisateur.kyc.etat,
+                statusCompte: utilisateur.statusCompte
+            },
+            process.env.JWT_SECRET,
+            { expiresIn: "1h" }
+        );
+
+        res.status(200).json({
+            message: "Connexion réussie",
+            token,
+            utilisateur: {
+                _id: utilisateur._id,
+                nomComplet: utilisateur.nomComplet,
+                email: utilisateur.email,
+                telephone: utilisateur.telephone,
+                pays: utilisateur.pays,
+                numeroCompte: utilisateur.numeroCompte,
+                solde: utilisateur.solde, // Renvoyer tous les soldes
+                kyc: utilisateur.kyc,
+                statusCompte: utilisateur.statusCompte,
+                dateCreation: utilisateur.dateCreation,
+                dateMiseAJour: utilisateur.dateMiseAJour,
+                compteStellar: {
+                    clePublique: utilisateur.compteStellar.clePublique
+                },
+                trustlines: utilisateur.trustlines // Renvoyer les trustlines
+            }
+        });
+
+    } catch (erreur) {
+        console.error("Erreur de connexion :", erreur);
+        res.status(500).json({ message: "Erreur lors de la connexion." });
+    }
 };
 
-// Nouvelle fonction facultative Ezéchias tu peux le retirer après N'oublie pas tu peux l'enlever après 
-// si elle n'est pas nécessaire pour ton application
-// Nouvelle fonction pour obtenir le profil de l'utilisateur connecté
 exports.getProfil = async (req, res) => {
-  try {
-    // L'ID de l'utilisateur est disponible via le token décodé, grâce au middleware
-    const utilisateurId = req.utilisateur.id;
+    try {
+        const utilisateurId = req.utilisateur.id;
 
-    // Chercher l'utilisateur dans la base de données (sans le mot de passe haché ou clé secrète)
-    const utilisateur = await User.findById(utilisateurId).select('-motDePasseHache -compteStellar.cleSecrete');
+        const utilisateur = await User.findById(utilisateurId).select('-motDePasseHache -compteStellar.cleSecrete');
 
-    if (!utilisateur) {
-      return res.status(404).json({ message: "Utilisateur non trouvé." });
+        if (!utilisateur) {
+            return res.status(404).json({ message: "Utilisateur non trouvé." });
+        }
+
+        res.status(200).json({
+            message: "Profil utilisateur récupéré avec succès",
+            utilisateur: {
+                _id: utilisateur._id,
+                nomComplet: utilisateur.nomComplet,
+                email: utilisateur.email,
+                telephone: utilisateur.telephone,
+                pays: utilisateur.pays,
+                numeroCompte: utilisateur.numeroCompte,
+                solde: utilisateur.solde, // Renvoyer tous les soldes
+                kyc: utilisateur.kyc,
+                statusCompte: utilisateur.statusCompte,
+                dateCreation: utilisateur.dateCreation,
+                dateMiseAJour: utilisateur.dateMiseAJour,
+                compteStellar: {
+                    clePublique: utilisateur.compteStellar.clePublique
+                },
+                trustlines: utilisateur.trustlines // Renvoyer les trustlines
+            }
+        });
+
+    } catch (erreur) {
+        console.error("Erreur lors de la récupération du profil :", erreur);
+        res.status(500).json({ message: "Erreur lors de la récupération du profil." });
     }
-
-    // Préparer la réponse (similaire à l'inscription/connexion)
-    const deviseUtilisateur = getDeviseParPays(utilisateur.pays);
-    const soldeDansLaDevise = utilisateur.solde[deviseUtilisateur] || 0;
-
-    const utilisateurAEnvoyer = {
-      _id: utilisateur._id,
-      nomComplet: utilisateur.nomComplet,
-      email: utilisateur.email,
-      telephone: utilisateur.telephone,
-      pays: utilisateur.pays,
-      numeroCompte: utilisateur.numeroCompte,
-      devise: deviseUtilisateur,
-      solde: soldeDansLaDevise,
-      kyc: {
-        etat: utilisateur.kyc.etat,
-        documents: utilisateur.kyc.documents,
-        dateVerification: utilisateur.kyc.dateVerification
-      },
-      statusCompte: utilisateur.statusCompte,
-      dateCreation: utilisateur.dateCreation,
-      dateMiseAJour: utilisateur.dateMiseAJour,
-      compteStellar: {
-          clePublique: utilisateur.compteStellar.clePublique
-      }
-    };
-
-    res.status(200).json({
-      message: "Profil utilisateur récupéré avec succès",
-      utilisateur: utilisateurAEnvoyer
-    });
-
-  } catch (erreur) {
-    console.error("Erreur lors de la récupération du profil :", erreur);
-    res.status(500).json({ message: "Erreur lors de la récupération du profil." });
-  }
 };
