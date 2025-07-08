@@ -1,6 +1,12 @@
+//Petite correction pour essayer
+const StellarSdk = require("@stellar/stellar-sdk");
+const { Keypair, TransactionBuilder, Operation, Asset, Networks } = StellarSdk;
+const Server = StellarSdk.Server;
+
+
 // controllers/transactionController.js
 
-const { Server, Keypair, TransactionBuilder, Operation, Asset, Networks } = require("@stellar/stellar-sdk");
+// Une ligne enlevé ici à remplacer
 const axios = require("axios"); // Pour faire des requêtes HTTP aux APIs de TestAnchor
 const User = require("../models/User");
 const mongoose = require("mongoose"); // Pour les transactions MongoDB

@@ -1,8 +1,13 @@
+//Petite correction pour essayer
+const StellarSdk = require("@stellar/stellar-sdk");
+const { Keypair, TransactionBuilder, Operation, Asset, Networks } = StellarSdk;
+const Server = StellarSdk.Server;
+
 // controllers/userController.js
 
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const { Keypair, Server, TransactionBuilder, Operation, Asset, Networks } = require("@stellar/stellar-sdk");
+// Une ligne enlevé ici à remplacer
 const User = require("../models/User");
 
 // --- Configurations Stellar ---
