@@ -1,15 +1,13 @@
 // controllers/transactionController.js
-
-// Une ligne enlevé ici à remplacer
+const jwt = require("jsonwebtoken"); 
 // Nouveau et CORRECT pour stellar-sdk@13.3.0:
 const StellarSdk = require("@stellar/stellar-sdk");
 const { Keypair, TransactionBuilder, Operation, Asset, Networks } = StellarSdk;
 // Accédez à Server via StellarSdk.Horizon
 const Server = StellarSdk.Horizon.Server; // <-- C'est ça la clé !
-// Après modif
 const axios = require("axios"); // Pour faire des requêtes HTTP aux APIs de TestAnchor
-const User = require("../models/User");
-const mongoose = require("mongoose"); // Pour les transactions MongoDB
+const User = require("../models/User"); // Nous aurons besoin du modèle User
+const mongoose = require("mongoose"); // Pour les sessions de transaction MongoDB
 
 // --- Configurations Stellar & TestAnchor ---
 const STELLAR_SERVER = new Server(process.env.HORIZON_URL);
@@ -38,7 +36,8 @@ let sep10TokenExpiry = 0; // Timestamp de l'expiration
 // --- Fonction Utilitaire : Authentification SEP-0010 avec TestAnchor ---
 // Cette fonction permet à votre backend AfriSwift de s'authentifier auprès de TestAnchor
 async function getSep10AuthToken() {
-    if (sep10AuthToken && sep10TokenExpiry > Date.now() + 60000) { // Renouveler 1 minute avant expiration
+    // Renouveler le token si expiré ou sur le point d'expirer (dans la prochaine minute)
+    if (sep10AuthToken && sep10TokenExpiry > Date.now() + 60 * 1000) {
         return sep10AuthToken;
     }
 
@@ -61,10 +60,14 @@ async function getSep10AuthToken() {
         });
 
         sep10AuthToken = submitResponse.data.token;
-        // Le token JWT contient des infos d'expiration, on peut le décoder ou estimer (pour l'MVP)
-        // Pour une meilleure gestion, utilisez une librairie JWT pour décoder et extraire 'exp'
-        // Pour l'instant, on estime une validité de 24h
-        sep10TokenExpiry = Date.now() + (24 * 60 * 60 * 1000); // 24 heures
+        // Pour une meilleure gestion, décodez le JWT pour extraire 'exp' (expiration time)
+        // Pour l'MVP, on estime une validité de 24h si pas d'info 'exp' dans le token
+        const decodedToken = jwt.decode(sep10AuthToken);
+        if (decodedToken && decodedToken.exp) {
+            sep10TokenExpiry = decodedToken.exp * 1000; // Convertir secondes en millisecondes
+        } else {
+            sep10TokenExpiry = Date.now() + (24 * 60 * 60 * 1000); // 24 heures par défaut
+        }
 
         console.log("Token SEP-0010 obtenu avec succès !");
         return sep10AuthToken;
@@ -75,12 +78,57 @@ async function getSep10AuthToken() {
     }
 }
 
-// --- Contrôleur : Simuler Dépôt Mobile Money vers SRT (TestAnchor) ---
-exports.depotMobileMoneyVersStellar = async (req, res) => {
-    // Ceci simule l'arrivée de fonds via Mobile Money et leur conversion en SRT par TestAnchor.
-    // En PRODUCTION, ceci serait déclenché par un WEBHOOK de votre FOURNISSEUR MOBILE MONEY
-    // APRÈS CONFIRMATION DE PAIEMENT, ET NON PAR UNE REQUÊTE UTILISATEUR DIRECTE.
-    // L'APPEL À L'ENDPOINT DE L'ANCHOR SE FAIT APRÈS AVOIR REÇU LES FONDS RÉELS.
+// --- NOUVELLE FONCTION : Enregistrer les informations bancaires de l'utilisateur ---
+exports.enregistrerInfosBancaires = async (req, res) => {
+    try {
+        const userId = req.utilisateur.id; // ID de l'utilisateur connecté
+        const {
+            bankAccountNumber,
+            bankAccountType,
+            bankName,
+            bankBranch,
+            bankClearingCode
+        } = req.body;
+
+        // Validation simple des champs
+        if (!bankAccountNumber || !bankAccountType || !bankName) {
+            return res.status(400).json({ message: "Les champs numéro de compte, type de compte et nom de la banque sont requis." });
+        }
+
+        const utilisateur = await User.findById(userId);
+        if (!utilisateur) {
+            return res.status(404).json({ message: "Utilisateur non trouvé." });
+        }
+
+        // Stocker les informations bancaires dans le document de l'utilisateur
+        utilisateur.bankDetails = {
+            bankAccountNumber,
+            bankAccountType,
+            bankName,
+            bankBranch: bankBranch || null, // Optionnel
+            bankClearingCode: bankClearingCode || null // Optionnel
+        };
+        utilisateur.dateMiseAJour = Date.now();
+        await utilisateur.save();
+
+        res.status(200).json({
+            message: "Informations bancaires enregistrées avec succès.",
+            bankDetails: utilisateur.bankDetails
+        });
+
+    } catch (error) {
+        console.error("Erreur lors de l'enregistrement des informations bancaires :", error);
+        res.status(500).json({ message: "Erreur interne du serveur lors de l'enregistrement des informations bancaires." });
+    }
+};
+
+
+// --- Fonction RENOMMÉE : Dépôt Bancaire (simulé) vers SRT (TestAnchor) ---
+exports.depotBancaireVersStellar = async (req, res) => {
+    // Cette fonction simule l'arrivée de fonds via un dépôt bancaire
+    // et leur conversion en SRT par TestAnchor.
+    // EN PRODUCTION, CECI SERAIT DÉCLENCHÉ PAR UN WEBHOOK DE VOTRE FOURNISSEUR BANCAIRE
+    // APRÈS CONFIRMATION DE PAIEMENT, NON PAR UNE REQUÊTE UTILISATEUR DIRECTE.
 
     const session = await mongoose.startSession();
     session.startTransaction();
@@ -103,6 +151,12 @@ exports.depotMobileMoneyVersStellar = async (req, res) => {
             return res.status(403).json({ message: "Votre compte est bloqué. Impossible d'effectuer un dépôt." });
         }
 
+        // --- Vérifier si les informations bancaires sont enregistrées ---
+        if (!utilisateur.bankDetails || !utilisateur.bankDetails.bankAccountNumber) {
+            await session.abortTransaction();
+            return res.status(400).json({ message: "Veuillez d'abord enregistrer vos informations bancaires pour effectuer un dépôt." });
+        }
+
         const montantXOFNumerique = parseFloat(montantXOF);
         if (isNaN(montantXOFNumerique) || montantXOFNumerique <= 0) {
             await session.abortTransaction();
@@ -110,8 +164,6 @@ exports.depotMobileMoneyVersStellar = async (req, res) => {
         }
 
         // --- SIMULATION de la conversion XOF -> SRT ---
-        // Pour un MVP, on simule un taux de change.
-        // En réel, cela impliquerait un taux de votre Anchor ou un oracle externe.
         const tauxDeConversionXOFVersSRT = 0.1; // Exemple: 10 XOF = 1 SRT
         const montantSRT = montantXOFNumerique * tauxDeConversionXOFVersSRT;
 
@@ -124,14 +176,13 @@ exports.depotMobileMoneyVersStellar = async (req, res) => {
         if (!hasSRTTrustline) {
             await session.abortTransaction();
             return res.status(400).json({ message: `Veuillez d'abord établir une trustline pour l'actif ${TEST_ANCHOR_ASSET_CODE} (TestAnchor) sur votre compte Stellar. Contactez le support.` });
-            // Ou vous pouvez tenter de l'établir ici si ce n'est pas fait (mais c'est déjà dans l'inscription)
         }
 
         // 1. Obtenir le token d'authentification SEP-0010
         const sep10Token = await getSep10AuthToken();
 
         // 2. Appeler l'API /deposit de TestAnchor (SEP-0006)
-        // Simule que nous avons reçu le Mobile Money et demandons à l'Anchor d'envoyer le SRT
+        // Utilisation des informations bancaires stockées et des noms/email de l'utilisateur
         const depositResponse = await axios.get(`${TEST_ANCHOR_TRANSFER_SERVER_SEP6}/deposit`, {
             headers: {
                 'Authorization': `Bearer ${sep10Token}`
@@ -139,16 +190,17 @@ exports.depotMobileMoneyVersStellar = async (req, res) => {
             params: {
                 asset_code: TEST_ANCHOR_ASSET_CODE,
                 account: utilisateur.compteStellar.clePublique,
-                // memo: "unique_deposit_id_from_your_system", // Un identifiant unique de votre côté
-                // memo_type: "text",
-                // type: "mobile_money" // Déclare le type de dépôt
+                type: "bank_account", // Type de dépôt attendu par l'anchor
+                bank_account_number: utilisateur.bankDetails.bankAccountNumber,
+                bank_account_type: utilisateur.bankDetails.bankAccountType,
+                bank_name: utilisateur.bankDetails.bankName,
+                bank_branch: utilisateur.bankDetails.bankBranch || "",
+                bank_clearing_code: utilisateur.bankDetails.bankClearingCode || "",
+                first_name: utilisateur.firstName, // Récupéré de l'utilisateur en DB
+                last_name: utilisateur.lastName,   // Récupéré de l'utilisateur en DB
+                email_address: utilisateur.email   // Récupéré de l'utilisateur en DB
             }
         });
-
-        // La réponse du /deposit de SEP-0006 pour le `testanchor` ne contient pas la transaction directement,
-        // mais indique que la transaction sera envoyée à l'utilisateur.
-        // Nous devons attendre la confirmation on-chain ou faire confiance à l'anchor.
-        // Pour le MVP, on suppose que l'anchor va créditer l'utilisateur.
 
         // 3. Mettre à jour le solde interne de l'utilisateur dans la DB
         utilisateur.solde.SRT = (utilisateur.solde.SRT || 0) + montantSRT;
@@ -159,17 +211,17 @@ exports.depotMobileMoneyVersStellar = async (req, res) => {
         session.endSession();
 
         res.status(200).json({
-            message: `Dépôt Mobile Money simulé. ${montantSRT} ${TEST_ANCHOR_ASSET_CODE} seront crédités sur votre compte Stellar par TestAnchor.`,
+            message: `Dépôt bancaire simulé. ${montantSRT} ${TEST_ANCHOR_ASSET_CODE} seront crédités sur votre compte Stellar par TestAnchor.`,
             montantDeclareXOF: montantXOFNumerique,
             montantEstimeSRT: montantSRT,
             nouveauSoldeSRTInterne: utilisateur.solde.SRT,
-            // transactionStellarId: "Attendez confirmation sur Stellar Explorer" // L'ID viendra quand TestAnchor aura soumis
+            stellarDepositDetails: depositResponse.data
         });
 
     } catch (error) {
         await session.abortTransaction();
         session.endSession();
-        console.error("Erreur lors du dépôt Mobile Money vers Stellar :", error.response ? error.response.data : error.message);
+        console.error("Erreur lors du dépôt bancaire vers Stellar :", error.response ? error.response.data : error.message);
         let errorMessage = "Erreur lors du traitement du dépôt.";
         if (error.response && error.response.data) {
             errorMessage = error.response.data.error || JSON.stringify(error.response.data);
@@ -244,8 +296,9 @@ exports.effectuerTransactionStellar = async (req, res) => {
         }
 
         // 5. Construire et signer la transaction Stellar
+        const baseFee = await STELLAR_SERVER.fetchBaseFee(); // Récupère le minimum de frais pour le réseau
         const transaction = new TransactionBuilder(expeditorStellarAccount, {
-            fee: STELLAR_SERVER.fetchBaseFee(),
+            fee: baseFee,
             networkPassphrase: STELLAR_NETWORK_PASSPHRASE
         })
         .addOperation(
@@ -287,12 +340,12 @@ exports.effectuerTransactionStellar = async (req, res) => {
             const tauxConversionSRTVersGHS = 0.5; // Exemple: 1 SRT = 0.5 GHS
             const montantGHS = montantNumerique * tauxConversionSRTVersGHS;
 
-            console.log(`SIMULATION CASH-OUT: Utilisateur ${destinataire.nomComplet} (Ghana) a reçu ${montantNumerique} ${TEST_ANCHOR_ASSET_CODE}. Simule envoi de ${montantGHS} GHS à son Mobile Money.`);
-            // Mettez à jour le solde GHS interne du destinataire si vous le souhaitez
-            // ou notez simplement que l'argent a été "retiré".
-            // Par exemple, on pourrait débiter le solde SRT du destinataire si l'argent est immédiatement retiré.
-            destinataire.solde.SRT -= montantNumerique; // Déduire le SRT car il est censé être retiré
-            destinataire.solde.GHS = (destinataire.solde.GHS || 0) + montantGHS; // Créditer le solde GHS (simulé)
+            console.log(`SIMULATION CASH-OUT: Utilisateur ${destinataire.firstName} ${destinataire.lastName} (Ghana) a reçu ${montantNumerique} ${TEST_ANCHOR_ASSET_CODE}. Simule envoi de ${montantGHS} GHS à son Mobile Money.`);
+            
+            // Déduire le SRT car il est censé être retiré
+            destinataire.solde.SRT -= montantNumerique; 
+            // Créditer le solde GHS (simulé)
+            destinataire.solde.GHS = (destinataire.solde.GHS || 0) + montantGHS; 
             await destinataire.save(); // Sauvegarder cette mise à jour simulée
 
             res.status(200).json({
@@ -313,11 +366,11 @@ exports.effectuerTransactionStellar = async (req, res) => {
     } catch (erreur) {
         await session.abortTransaction();
         session.endSession();
-        console.error("Erreur lors de l'exécution de la transaction Stellar :", erreur.response ? erreur.response.data : erreur.message);
+        console.error("Erreur lors de l'exécution de la transaction Stellar :", erreur.response ? error.response.data : error.message);
         let errorMessage = "Erreur interne du serveur lors de la transaction.";
 
         if (erreur.response && erreur.response.data && erreur.response.data.extras) {
-            errorMessage = `Erreur Stellar: ${erreur.response.data.extras.result_codes.operations || erreur.response.data.extras.result_codes.transaction}`;
+            errorMessage = `Erreur Stellar: ${erreur.response.data.extras.result_codes.operations || error.response.data.extras.result_codes.transaction}`;
         } else if (error.response && error.response.data) {
              errorMessage = error.response.data.error || JSON.stringify(error.response.data);
         } else if (erreur.message) {

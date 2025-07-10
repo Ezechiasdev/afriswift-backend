@@ -1,19 +1,21 @@
+// routes/userRoutes.js
+
 const express = require("express");
 const router = express.Router();
 const userController = require("../controllers/userController");
-const authMiddleware = require("../middleware/authMiddleware"); 
+const transactionController = require("../controllers/transactionController"); // AJOUTÉ POUR LA NOUVELLE ROUTE
+const authMiddleware = require("../middleware/authMiddleware");
 
 // Route d'inscription
 router.post("/inscription", userController.inscription);
 
-// Route de connexion (AJOUTEZ CETTE LIGNE)
+// Route de connexion
 router.post("/connexion", userController.connexion);
 
 // Route pour obtenir le profil de l'utilisateur (PROTÉGÉE)
-// Ezéchias remarque l'ordre : d'abord le middleware, ensuite le contrôleur
-router.get("/profil", authMiddleware.verifierToken, userController.getProfil); 
+router.get("/profil", authMiddleware.verifierToken, userController.getProfil);
 
-// D'autres routes viendront ici (connexion, dépôt, etc.)
+// NOUVELLE ROUTE : Enregistrer les informations bancaires de l'utilisateur (PROTÉGÉE)
+router.post("/bank-details", authMiddleware.verifierToken, transactionController.enregistrerInfosBancaires);
 
 module.exports = router;
-

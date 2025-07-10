@@ -3,7 +3,13 @@
 const mongoose = require("mongoose");
 
 const userSchema = new mongoose.Schema({
-  nomComplet: {
+  // Ancien: nomComplet: { type: String, required: true },
+  firstName: { // Nouveau champ
+    type: String,
+    required: true,
+    trim: true,
+  },
+  lastName: { // Nouveau champ
     type: String,
     required: true,
     trim: true,
@@ -45,17 +51,15 @@ const userSchema = new mongoose.Schema({
       type: String,
       required: true,
       unique: true,
-      select: false, // Très important : ne pas renvoyer la clé secrète par défaut
+      select: false,
     },
   },
   solde: {
-    // Il est préférable de stocker les soldes par code d'actif, surtout pour les actifs de l'anchor
-    // Cela permet de gérer XLM, SRT, USDC, XOF (si un jour), etc.
     XLM: { type: Number, default: 0 },
-    SRT: { type: Number, default: 0 }, // Nouveau champ pour l'actif de TestAnchor
-    USDC: { type: Number, default: 0 }, // Si vous décidez d'utiliser USDC de TestAnchor
-    // XOF: { type: Number, default: 0 }, // Pour le futur si vous intégrez une vraie anchor XOF
-    // GHS: { type: Number, default: 0 }, // Pour le futur si vous intégrez une vraie anchor GHS
+    SRT: { type: Number, default: 0 },
+    USDC: { type: Number, default: 0 },
+    XOF: { type: Number, default: 0 }, // Ajouté pour le futur si besoin
+    GHS: { type: Number, default: 0 }, // Ajouté pour le futur si besoin
   },
   kyc: {
     etat: {
@@ -72,12 +76,19 @@ const userSchema = new mongoose.Schema({
       type: Date,
     },
   },
-  // Optionnel : un champ pour savoir quelles trustlines l'utilisateur a configurées
   trustlines: [{
     assetCode: String,
     issuer: String,
     established: { type: Boolean, default: false }
   }],
+  // NOUVEAU CHAMP : Informations bancaires
+  bankDetails: {
+    bankAccountNumber: { type: String, default: null },
+    bankAccountType: { type: String, default: null }, // ex: checking, savings
+    bankName: { type: String, default: null },
+    bankBranch: { type: String, default: null }, // Optionnel
+    bankClearingCode: { type: String, default: null }, // Optionnel
+  },
   statusCompte: {
     type: String,
     enum: ["actif", "inactif", "bloqué"],
