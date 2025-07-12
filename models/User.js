@@ -3,13 +3,12 @@
 const mongoose = require("mongoose");
 
 const userSchema = new mongoose.Schema({
-  // Ancien: nomComplet: { type: String, required: true },
-  firstName: { // Nouveau champ
+  firstName: {
     type: String,
     required: true,
     trim: true,
   },
-  lastName: { // Nouveau champ
+  lastName: {
     type: String,
     required: true,
     trim: true,
@@ -47,19 +46,25 @@ const userSchema = new mongoose.Schema({
       required: true,
       unique: true,
     },
-    cleSecrete: {
+    cleSecrete: { // La clé secrète Stellar (S...)
       type: String,
       required: true,
       unique: true,
-      select: false,
+      select: false, // Ne pas exposer par défaut
+    },
+    phraseDeRecuperation: { // La phrase mnémonique BIP-39
+      type: String,
+      required: true,
+      unique: true, // La phrase mnémonique est aussi unique
+      select: false, // Ne pas exposer par défaut
     },
   },
   solde: {
     XLM: { type: Number, default: 0 },
     SRT: { type: Number, default: 0 },
     USDC: { type: Number, default: 0 },
-    XOF: { type: Number, default: 0 }, // Ajouté pour le futur si besoin
-    GHS: { type: Number, default: 0 }, // Ajouté pour le futur si besoin
+    XOF: { type: Number, default: 0 },
+    GHS: { type: Number, default: 0 },
   },
   kyc: {
     etat: {
@@ -69,7 +74,7 @@ const userSchema = new mongoose.Schema({
     },
     documents: [
       {
-        type: String, // URL vers le document stocké
+        type: String,
       },
     ],
     dateVerification: {
@@ -81,13 +86,12 @@ const userSchema = new mongoose.Schema({
     issuer: String,
     established: { type: Boolean, default: false }
   }],
-  // NOUVEAU CHAMP : Informations bancaires
   bankDetails: {
     bankAccountNumber: { type: String, default: null },
-    bankAccountType: { type: String, default: null }, // ex: checking, savings
+    bankAccountType: { type: String, default: null },
     bankName: { type: String, default: null },
-    bankBranch: { type: String, default: null }, // Optionnel
-    bankClearingCode: { type: String, default: null }, // Optionnel
+    bankBranch: { type: String, default: null },
+    bankClearingCode: { type: String, default: null },
   },
   statusCompte: {
     type: String,

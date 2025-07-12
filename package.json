@@ -19,6 +19,7 @@
     "fedapay": "^1.2.4",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.15.0",
+    "stellar-hd-wallet": "^1.0.2",
     "stellar-sdk": "^13.3.0"
   },
   "devDependencies": {

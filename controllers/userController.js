@@ -7,6 +7,9 @@ const StellarSdk = require("@stellar/stellar-sdk");
 const { Keypair, TransactionBuilder, Operation, Asset, Networks } = StellarSdk;
 const Server = StellarSdk.Horizon.Server; 
 
+// Import dynamique de HDWallet
+// const HDWallet = require("stellar-hd-wallet"); // Commenté car nous utilisons l'import dynamique
+
 const User = require("../models/User");
 
 // --- Configurations Stellar ---
@@ -14,28 +17,27 @@ const STELLAR_SERVER = new Server(process.env.HORIZON_URL);
 const STELLAR_NETWORK_PASSPHRASE = process.env.STELLAR_NETWORK === 'public' ? Networks.PUBLIC : Networks.TESTNET;
 
 // Informations de l'actif SRT de TestAnchor
-const TEST_ANCHOR_SRT_ASSET_CODE = process.env.TEST_ANCHOR_ASSET_CODE;
-const TEST_ANCHOR_SRT_ASSET_ISSUER = process.env.TEST_ANCHOR_ASSET_ISSUER;
-const TEST_ANCHOR_SRT_ASSET = new Asset(TEST_ANCHOR_SRT_ASSET_CODE, TEST_ANCHOR_SRT_ASSET_ISSUER);
+// Ces variables sont maintenant utilisées directement dans la fonction inscription
+// pour s'assurer que process.env est chargé.
+const ANCHOR_ASSET_CODE = process.env.TEST_ANCHOR_ASSET_CODE;
+const ANCHOR_ASSET_ISSUER = process.env.TEST_ANCHOR_ASSET_ISSUER;
+
 
 // --- Fonctions utilitaires ---
-// MODIFICATION ICI : Rendre la génération de numéro de compte plus robuste et asynchrone
 async function genererNumeroCompteUnique() {
   const prefix = "AFS";
   let numeroUnique = "";
   let isUnique = false;
 
   while (!isUnique) {
-    const random = Math.floor(100000000 + Math.random() * 900000000); // 9 chiffres aléatoires
+    const random = Math.floor(100000000 + Math.random() * 900000000);
     numeroUnique = `${prefix}${random}`;
 
-    // Vérifier si ce numéro de compte existe déjà dans la base de données
     const existingUser = await User.findOne({ numeroCompte: numeroUnique });
     if (!existingUser) {
-      isUnique = true; // Le numéro est unique, on peut sortir de la boucle
+      isUnique = true;
     } else {
       console.warn(`Collision détectée pour le numéro de compte ${numeroUnique}, en génère un nouveau.`);
-      // Continuer la boucle pour générer un nouveau numéro
     }
   }
   return numeroUnique;
@@ -53,7 +55,7 @@ async function establishTrustline(userKeypair, asset) {
         })
         .addOperation(Operation.changeTrust({
             asset: asset,
-            limit: "922337203685.4775807" // Montant maximum (valeur par défaut)
+            limit: "922337203685.4775807" // Montant maximum
         }))
         .setTimeout(30)
         .build();
@@ -87,11 +89,13 @@ exports.inscription = async (req, res) => {
 
     const motDePasseHache = await bcrypt.hash(motDePasse, 10);
 
-    const keypair = Keypair.random();
+    const HDWallet = (await import("stellar-hd-wallet")).default; 
+    const phraseDeRecuperation = HDWallet.generateMnemonic(); 
+    const walletInstance = HDWallet.fromMnemonic(phraseDeRecuperation); 
+    const keypair = walletInstance.getKeypair(0); 
     const clePublique = keypair.publicKey();
     const cleSecrete = keypair.secret();
 
-    // MODIFIÉ ICI : Utiliser la fonction asynchrone pour générer un numéro de compte unique
     const numeroCompte = await genererNumeroCompteUnique(); 
 
     const nouvelUtilisateur = new User({
@@ -104,11 +108,12 @@ exports.inscription = async (req, res) => {
       motDePasseHache,
       compteStellar: {
         clePublique,
-        cleSecrete
+        cleSecrete,
+        phraseDeRecuperation 
       },
       solde: {
-        XLM: 0,
-        SRT: 0,
+        XLM: 0, 
+        SRT: 0, 
         USDC: 0
       },
       kyc: { etat: "en attente" },
@@ -123,26 +128,31 @@ exports.inscription = async (req, res) => {
         const friendbotResponse = await fetch(`https://friendbot.stellar.org/?addr=${clePublique}`);
         const friendbotData = await friendbotResponse.json();
         console.log("Friendbot response for new user:", friendbotData);
+        
+        nouvelUtilisateur.solde.XLM = 10000; 
+        await nouvelUtilisateur.save();
+
     } catch (friendbotError) {
         console.error("Erreur lors du financement du compte Stellar via Friendbot :", friendbotError);
         return res.status(500).json({ message: "Erreur lors du financement initial du compte Stellar. Veuillez réessayer plus tard." });
     }
 
+    // Définir l'actif SRT ici pour s'assurer que les variables d'environnement sont chargées
+    const TEST_ANCHOR_SRT_ASSET = new Asset(ANCHOR_ASSET_CODE, ANCHOR_ASSET_ISSUER);
+
     const userKeypair = Keypair.fromSecret(cleSecrete);
     const trustlineEstablished = await establishTrustline(userKeypair, TEST_ANCHOR_SRT_ASSET);
-
     if (!trustlineEstablished) {
         console.error("Impossible d'établir la trustline pour SRT. L'utilisateur pourrait ne pas pouvoir recevoir d'actifs de l'Anchor.");
     } else {
         nouvelUtilisateur.trustlines.push({
-            assetCode: TEST_ANCHOR_SRT_ASSET_CODE,
-            issuer: TEST_ANCHOR_SRT_ASSET_ISSUER,
+            assetCode: ANCHOR_ASSET_CODE, // Utilisation directe des variables d'environnement
+            issuer: ANCHOR_ASSET_ISSUER, // Utilisation directe des variables d'environnement
             established: true
         });
         await nouvelUtilisateur.save();
     }
 
-    // Préparer la réponse (sans la clé secrète)
     const utilisateurAEnvoyer = {
       _id: nouvelUtilisateur._id,
       firstName: nouvelUtilisateur.firstName,
@@ -170,7 +180,6 @@ exports.inscription = async (req, res) => {
   } catch (erreur) {
     console.error("Erreur d'inscription :", erreur);
     if (erreur.code === 11000) {
-        // Le message d'erreur est plus spécifique maintenant
         return res.status(400).json({ message: "Cet email, numéro de compte, ou clé Stellar est déjà utilisé." });
     }
     res.status(500).json({ message: "Erreur lors de l'inscription." });
@@ -178,7 +187,7 @@ exports.inscription = async (req, res) => {
 };
 
 
-// --- Connexion et Profil (ajuster pour renvoyer tous les soldes) ---
+// --- Connexion et Profil ---
 exports.connexion = async (req, res) => {
     try {
         const { email, motDePasse } = req.body;
@@ -245,7 +254,7 @@ exports.getProfil = async (req, res) => {
     try {
         const utilisateurId = req.utilisateur.id;
 
-        const utilisateur = await User.findById(utilisateurId).select('-motDePasseHache -compteStellar.cleSecrete');
+        const utilisateur = await User.findById(utilisateurId).select('-motDePasseHache'); 
 
         if (!utilisateur) {
             return res.status(404).json({ message: "Utilisateur non trouvé." });
