@@ -44,3 +44,4 @@
       console.log(`🚀 Serveur AfriSwift backend démarré sur le port ${PORT}`);
     });
     
+    module.exports = app;
