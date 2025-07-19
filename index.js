@@ -1,33 +1,46 @@
-const express = require("express");
-const mongoose = require("mongoose");
-require("dotenv").config();
-const userRoutes = require("./routes/userRoutes");
-//const depotRoutes = require("./routes/depotRoutes");
-const transactionRoutes = require("./routes/transactionRoutes"); 
+// index.js
 
-const app = express();
-const PORT = process.env.PORT || 3000;
+    const express = require("express");
+    const mongoose = require("mongoose");
+    require("dotenv").config();
+    const userRoutes = require("./routes/userRoutes");
+    const transactionRoutes = require("./routes/transactionRoutes"); 
 
-// Middlewares
-app.use(express.json());
+    const app = express();
+    const PORT = process.env.PORT || 3000;
 
-// Connexion MongoDB
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("✅ Connexion à MongoDB réussie"))
-  .catch(err => console.error("❌ Erreur de connexion MongoDB :", err));
+    // Middlewares
+    app.use(express.json());
 
-// Routes
-app.use("/api/users", userRoutes);
-app.use("/api/transactions", transactionRoutes);
+    // Middleware de log général pour toutes les requêtes
+    app.use((req, res, next) => {
+      console.log(`[${new Date().toISOString()}] Requête reçue: ${req.method} ${req.url}`);
+      next();
+    });
 
-app.get("/", (req, res) => {
-  res.send("✅ API AfriSwift fonctionne !");
-});
+    // Connexion MongoDB
+    mongoose.connect(process.env.MONGO_URI)
+      .then(() => console.log("✅ Connexion à MongoDB réussie"))
+      .catch(err => console.error("❌ Erreur de connexion MongoDB :", err));
 
+    // Routes
+    console.log("Enregistrement des routes /api/users...");
+    app.use("/api/users", userRoutes);
+    console.log("Enregistrement des routes /api/transactions...");
+    app.use("/api/transactions", transactionRoutes);
 
-// Démarrage serveur
-app.listen(PORT, () => {
-  console.log(`🚀 Serveur AfriSwift backend démarré sur le port ${PORT}`);
-});
+    app.get("/", (req, res) => {
+      res.send("✅ API AfriSwift fonctionne !");
+    });
 
+    // Middleware de gestion des erreurs 404 (si aucune route n'a été trouvée)
+    app.use((req, res, next) => {
+        console.warn(`[${new Date().toISOString()}] Erreur 404: Aucune route trouvée pour ${req.method} ${req.url}`);
+        res.status(404).send('<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Error</title></head><body><pre>Cannot ' + req.method + ' ' + req.url + '</pre></body></html>');
+    });
 
+    // Démarrage serveur
+    app.listen(PORT, () => {
+      console.log(`🚀 Serveur AfriSwift backend démarré sur le port ${PORT}`);
+    });
+    

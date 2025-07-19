@@ -1,0 +1,82 @@
+Metadata-Version: 2.3
+Name: requests-sse
+Version: 0.5.2
+Summary: server-sent events python client library based on requests
+License: Apache-2.0
+Keywords: server-sent events,sse,stream,requests
+Author: overcat
+Author-email: 4catcode@gmail.com
+Maintainer: overcat
+Maintainer-email: 4catcode@gmail.com
+Requires-Python: >=3.7,<4.0
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: Apache Software License
+Classifier: Natural Language :: English
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.7
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3.13
+Classifier: Programming Language :: Python :: 3 :: Only
+Classifier: Programming Language :: Python :: Implementation :: CPython
+Classifier: Programming Language :: Python :: Implementation :: PyPy
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Classifier: Typing :: Typed
+Requires-Dist: requests (>=2.0.0,<3.0.0)
+Project-URL: Bug Tracker, https://github.com/overcat/requests-sse/issues
+Project-URL: Documentation, https://github.com/overcat/requests-sse
+Project-URL: Homepage, https://github.com/overcat/requests-sse
+Project-URL: Repository, https://github.com/overcat/requests-sse
+Description-Content-Type: text/x-rst
+
+============
+requests-sse
+============
+
+.. image:: https://img.shields.io/github/actions/workflow/status/overcat/requests-sse/test-deploy.yml?branch=main
+    :alt: GitHub Workflow Status
+    :target: https://github.com/overcat/requests-sse/actions
+.. image:: https://img.shields.io/pypi/v/requests-sse.svg
+    :alt: PyPI
+    :target: https://pypi.python.org/pypi/requests-sse
+.. image:: https://img.shields.io/badge/python-%3E%3D3.8-blue
+    :alt: Python - Version
+    :target: https://pypi.python.org/pypi/stellar-sdk
+
+A Server-Sent Events python client based on requests, provides a simple interface to process `Server-Sent Events <https://www.w3.org/TR/eventsource>`_.
+
+Installation
+------------
+.. code-block:: bash
+
+    pip install requests-sse
+
+Usage
+-----
+.. code-block:: python
+
+    import requests
+    from requests_sse import EventSource, InvalidStatusCodeError, InvalidContentTypeError
+
+    with EventSource("https://stream.wikimedia.org/v2/stream/recentchange", timeout=30) as event_source:
+        try:
+            for event in event_source:
+                print(event)
+        except InvalidStatusCodeError:
+            pass
+        except InvalidContentTypeError:
+            pass
+        except requests.RequestException:
+            pass
+
+Credits
+-------
+
+This project was inspired by `aiohttp-sse-client <https://github.com/rtfol/aiohttp-sse-client>`_, `aiosseclient <https://github.com/ebraminio/aiosseclient>`_,
+`sseclient <https://github.com/btubbs/sseclient>`_, and `sseclient-py <https://github.com/mpetazzoni/sseclient>`_.
