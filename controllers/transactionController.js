@@ -1,10 +1,11 @@
 // controllers/transactionController.js
 const jwt = require("jsonwebtoken"); 
-// Nouveau et CORRECT pour stellar-sdk@13.3.0:
 const StellarSdk = require("@stellar/stellar-sdk");
+// CORRECTIF CRITIQUE : Server n'est pas directement déstructurable de StellarSdk.
+// Il doit être accédé via StellarSdk.Horizon.Server.
 const { Keypair, TransactionBuilder, Operation, Asset, Networks } = StellarSdk;
-// Accédez à Server via StellarSdk.Horizon
 const Server = StellarSdk.Horizon.Server; // <-- C'est ça la clé !
+
 const axios = require("axios"); // Pour faire des requêtes HTTP aux APIs de TestAnchor
 const User = require("../models/User"); // Nous aurons besoin du modèle User
 const mongoose = require("mongoose"); // Pour les sessions de transaction MongoDB
@@ -21,9 +22,8 @@ if (!AFRISWIFT_BACKEND_KEYPAIR) {
   console.error("ERREUR: La clé secrète du backend AfriSwift (AFRISWIFT_BACKEND_STELLAR_SECRET) n'est pas configurée dans .env");
   process.exit(1);
 }
-
-const TEST_ANCHOR_ASSET_CODE = process.env.TEST_ANCHOR_ASSET_CODE; // Toujours "SRT"
-const TEST_ANCHOR_ASSET_ISSUER = process.env.TEST_ANCHOR_ASSET_ISSUER; // Toujours l'émetteur SRT
+const TEST_ANCHOR_ASSET_CODE = process.env.TEST_ANCHOR_ASSET_CODE; // "SRT"
+const TEST_ANCHOR_ASSET_ISSUER = process.env.TEST_ANCHOR_ASSET_ISSUER; // Émetteur de SRT
 const TEST_ANCHOR_SRT_ASSET = new Asset(TEST_ANCHOR_ASSET_CODE, TEST_ANCHOR_ASSET_ISSUER);
 
 const TEST_ANCHOR_AUTH_ENDPOINT = process.env.TEST_ANCHOR_AUTH_ENDPOINT;
@@ -113,7 +113,7 @@ exports.enregistrerInfosBancaires = async (req, res) => {
 };
 
 
-// --- Fonction : Dépôt Bancaire (simulé) vers XLM (via TestAnchor) ---
+// --- Fonction : Dépôt Bancaire (simulé) vers SRT (via TestAnchor) ---
 exports.depotBancaireVersStellar = async (req, res) => {
     const session = await mongoose.startSession();
     session.startTransaction();
@@ -147,11 +147,11 @@ exports.depotBancaireVersStellar = async (req, res) => {
             return res.status(400).json({ message: "Montant de dépôt invalide." });
         }
 
-        // --- SIMULATION de la conversion XOF -> XLM ---
-        const tauxDeConversionXOFVersXLM = 0.0001; // Exemple: 10000 XOF = 1 XLM
-        const montantXLM = montantXOFNumerique * tauxDeConversionXOFVersXLM;
+        // --- SIMULATION de la conversion XOF -> SRT ---
+        const tauxDeConversionXOFVersSRT = 0.1; 
+        const montantSRT = montantXOFNumerique * tauxDeConversionXOFVersSRT;
 
-        // --- MAINTENU : Vérifier l'existence de la Trustline SRT pour l'utilisateur (comme demandé) ---
+        // --- Vérifier l'existence de la Trustline SRT pour l'utilisateur ---
         const hasSRTTrustline = utilisateur.trustlines.some(tl =>
             tl.assetCode === TEST_ANCHOR_ASSET_CODE &&
             tl.issuer === TEST_ANCHOR_ASSET_ISSUER &&
@@ -165,15 +165,13 @@ exports.depotBancaireVersStellar = async (req, res) => {
         // 1. Obtenir le token d'authentification SEP-0010
         const sep10Token = await getSep10AuthToken();
 
-        // 2. Appeler l'API /deposit de TestAnchor (SEP-0006) pour XLM
-        // REMARQUE : TestAnchor pourrait ne pas supporter les dépôts bancaires directs vers XLM.
-        // Cette partie est pour tester la requête, le succès dépendra de l'implémentation de TestAnchor.
+        // 2. Appeler l'API /deposit de TestAnchor (SEP-0006) pour SRT
         const depositResponse = await axios.get(`${TEST_ANCHOR_TRANSFER_SERVER_SEP6}/deposit`, {
             headers: {
                 'Authorization': `Bearer ${sep10Token}`
             },
             params: {
-                asset_code: "XLM", // REQUÊTE XLM
+                asset_code: TEST_ANCHOR_ASSET_CODE, 
                 account: utilisateur.compteStellar.clePublique,
                 type: "bank_account",
                 bank_account_number: utilisateur.bankDetails.bankAccountNumber,
@@ -187,8 +185,8 @@ exports.depotBancaireVersStellar = async (req, res) => {
             }
         });
 
-        // 3. Mettre à jour le solde interne de l'utilisateur dans la DB (en XLM)
-        utilisateur.solde.XLM = (utilisateur.solde.XLM || 0) + montantXLM;
+        // 3. Mettre à jour le solde interne de l'utilisateur dans la DB (en SRT)
+        utilisateur.solde.SRT = (utilisateur.solde.SRT || 0) + montantSRT; 
         utilisateur.dateMiseAJour = Date.now();
         await utilisateur.save({ session });
 
@@ -196,17 +194,17 @@ exports.depotBancaireVersStellar = async (req, res) => {
         session.endSession();
 
         res.status(200).json({
-            message: `Dépôt bancaire simulé. ${montantXLM} XLM seront crédités sur votre compte Stellar par TestAnchor (si supporté).`,
+            message: `Dépôt bancaire simulé. ${montantSRT} ${TEST_ANCHOR_ASSET_CODE} seront crédités sur votre compte Stellar par TestAnchor.`, 
             montantDeclareXOF: montantXOFNumerique,
-            montantEstimeXLM: montantXLM,
-            nouveauSoldeXLMInterne: utilisateur.solde.XLM,
+            montantEstimeSRT: montantSRT, 
+            nouveauSoldeSRTInterne: utilisateur.solde.SRT, 
             stellarDepositDetails: depositResponse.data
         });
 
     } catch (error) {
         await session.abortTransaction();
         session.endSession();
-        console.error("Erreur lors du dépôt bancaire vers Stellar :", error.response ? error.response.data : error.message);
+        console.error("Erreur lors du dépôt bancaire vers Stellar (SRT) :", error.response ? error.response.data : error.message);
         let errorMessage = "Erreur lors du traitement du dépôt.";
         if (error.response && error.response.data) {
             errorMessage = error.response.data.error || JSON.stringify(error.response.data);
@@ -216,12 +214,13 @@ exports.depotBancaireVersStellar = async (req, res) => {
 };
 
 // --- Contrôleur : Effectuer une transaction XLM (P2P) ---
+// MODIFIÉ : Prend le montant en XOF, le convertit en XLM, et envoie le XLM.
 exports.effectuerTransactionStellar = async (req, res) => {
     const session = await mongoose.startSession();
     session.startTransaction();
 
     try {
-        const { destinataireNumeroCompte, montant } = req.body;
+        const { destinataireNumeroCompte, montantXOF } = req.body; // MODIFIÉ : Attendre 'montantXOF'
         const expeditorId = req.utilisateur.id;
 
         const expeditor = await User.findById(expeditorId).select('+compteStellar.cleSecrete').session(session);
@@ -244,16 +243,24 @@ exports.effectuerTransactionStellar = async (req, res) => {
             return res.status(400).json({ message: "Vous ne pouvez pas vous envoyer de l'argent à vous-même." });
         }
 
-        const montantNumerique = parseFloat(montant);
-        if (isNaN(montantNumerique) || montantNumerique <= 0) {
+        const montantXOFNumerique = parseFloat(montantXOF); // MODIFIÉ : Convertir montantXOF
+        if (isNaN(montantXOFNumerique) || montantXOFNumerique <= 0) {
             await session.abortTransaction();
             return res.status(400).json({ message: "Montant de transaction invalide." });
         }
 
-        // --- Vérifier le solde XLM interne de l'expéditeur ---
-        if (expeditor.solde.XLM < montantNumerique) {
+        // --- NOUVEAU : Conversion XOF en XLM ---
+        const tauxConversionXOFVersXLM = 0.0001; // Exemple: 10000 XOF = 1 XLM
+        const montantXLM = montantXOFNumerique * tauxConversionXOFVersXLM;
+        if (montantXLM <= 0) {
             await session.abortTransaction();
-            return res.status(400).json({ message: `Solde interne XLM insuffisant. Solde actuel: ${expeditor.solde.XLM} XLM.` });
+            return res.status(400).json({ message: "Le montant converti en XLM est trop faible pour la transaction." });
+        }
+
+        // --- Vérifier le solde XLM interne de l'expéditeur ---
+        if (expeditor.solde.XLM < montantXLM) { // MODIFIÉ : Vérifier avec montantXLM
+            await session.abortTransaction();
+            return res.status(400).json({ message: `Solde interne XLM insuffisant. Solde actuel: ${expeditor.solde.XLM} XLM. Vous avez besoin de ${montantXLM} XLM.` });
         }
 
         // 3. Charger le compte Stellar de l'expéditeur
@@ -273,10 +280,10 @@ exports.effectuerTransactionStellar = async (req, res) => {
         );
         const currentXLMStellarBalance = parseFloat(expeditorXLMBalance ? expeditorXLMBalance.balance : 0);
 
-        const reserveMinimum = 1; // Minimum de base pour un compte sans trustlines
-        const estimatedFee = parseFloat(await STELLAR_SERVER.fetchBaseFee()) / 10000000; // Convertir les stroops en XLM
+        const reserveMinimum = 1; 
+        const estimatedFee = parseFloat(await STELLAR_SERVER.fetchBaseFee()) / 10000000; 
         
-        if (currentXLMStellarBalance < (montantNumerique + estimatedFee + reserveMinimum)) {
+        if (currentXLMStellarBalance < (montantXLM + estimatedFee + reserveMinimum)) { // MODIFIÉ : Vérifier avec montantXLM
             await session.abortTransaction();
             return res.status(400).json({ message: `Solde XLM insuffisant sur votre compte Stellar pour la transaction et les frais de réserve. Solde actuel: ${currentXLMStellarBalance} XLM.` });
         }
@@ -292,7 +299,7 @@ exports.effectuerTransactionStellar = async (req, res) => {
             Operation.payment({
                 destination: destinataire.compteStellar.clePublique,
                 asset: Asset.native(), // Utilise l'actif natif (XLM)
-                amount: montantNumerique.toString()
+                amount: montantXLM.toString() // MODIFIÉ : Utilise le montant converti en XLM
             })
         )
         .setTimeout(30)
@@ -305,11 +312,11 @@ exports.effectuerTransactionStellar = async (req, res) => {
         console.log("Stellar P2P XLM Transaction Response:", transactionResponse);
 
         // 7. Mettre à jour les soldes internes des utilisateurs dans la base de données
-        expeditor.solde.XLM -= montantNumerique;
+        expeditor.solde.XLM -= montantXLM; // MODIFIÉ : Débiter en XLM
         expeditor.dateMiseAJour = Date.now();
         await expeditor.save({ session });
 
-        destinataire.solde.XLM = (destinataire.solde.XLM || 0) + montantNumerique;
+        destinataire.solde.XLM = (destinataire.solde.XLM || 0) + montantXLM; // MODIFIÉ : Créditer en XLM
         destinataire.dateMiseAJour = Date.now();
         await destinataire.save({ session });
 
@@ -317,10 +324,12 @@ exports.effectuerTransactionStellar = async (req, res) => {
         session.endSession();
 
         res.status(200).json({
-            message: `Transaction XLM effectuée avec succès !`,
+            message: `Transaction de ${montantXOFNumerique} XOF (${montantXLM} XLM) effectuée avec succès !`, // Message mis à jour
             transactionId: transactionResponse.id,
-            expeditorSoldeXLM: expeditor.solde.XLM,
-            destinataireSoldeXLMInterne: destinataire.solde.XLM
+            montantEnvoyeXOF: montantXOFNumerique, // NOUVEAU : Montant initial en XOF
+            montantConvertiXLM: montantXLM, // NOUVEAU : Montant converti en XLM
+            expeditorSoldeXLM: expeditor.solde.XLM, 
+            destinataireSoldeXLMInterne: destinataire.solde.XLM 
         });
 
 
@@ -332,10 +341,10 @@ exports.effectuerTransactionStellar = async (req, res) => {
 
         if (erreur.response && erreur.response.data && erreur.response.data.extras) {
             errorMessage = `Erreur Stellar: ${erreur.response.data.extras.result_codes.operations || erreur.response.data.extras.result_codes.transaction}`;
-        } else if (erreur.response && error.response.data) {
+        } else if (erreur.response && erreur.response.data) {
              errorMessage = error.response.data.error || JSON.stringify(error.response.data);
         } else if (error.message) {
-            errorMessage = error.message;
+            errorMessage = erreur.message;
         }
 
         res.status(500).json({ message: errorMessage });
@@ -435,33 +444,12 @@ exports.retraitStellarVersBancaire = async (req, res) => {
             console.log("Stellar XLM Withdrawal Transaction Response (on-chain):", transactionResponse); 
         } catch (stellarError) {
             console.error("Erreur lors de la soumission de la transaction Stellar (retrait XLM, on-chain) :", stellarError.response ? stellarError.response.data : stellarError.message);
-            // Nous ne faisons PAS un abortTransaction ici pour simuler que l'opération "interne" a eu lieu.
         }
 
         // 4. Déduire le solde interne de l'utilisateur (en XLM)
         utilisateur.solde.XLM -= montantXLM;
         utilisateur.dateMiseAJour = Date.now();
         await utilisateur.save({ session });
-
-        // 5. Appel à l'API /withdraw de TestAnchor (COMMENTÉ car non supporté pour XLM)
-        // const sep10Token = await getSep10AuthToken(); 
-        // const withdrawResponse = await axios.get(`${TEST_ANCHOR_TRANSFER_SERVER_SEP6}/withdraw`, {
-        //     headers: { 'Authorization': `Bearer ${sep10Token}` },
-        //     params: {
-        //         asset_code: "XLM",
-        //         account: utilisateur.compteStellar.clePublique,
-        //         type: "bank_account", 
-        //         bank_account_number: utilisateur.bankDetails.bankAccountNumber,
-        //         bank_account_type: utilisateur.bankDetails.bankAccountType,
-        //         bank_name: utilisateur.bankDetails.bankName,
-        //         bank_branch: utilisateur.bankDetails.bankBranch || "",
-        //         bank_clearing_code: utilisateur.bankDetails.bankClearingCode || "",
-        //         first_name: utilisateur.firstName,
-        //         last_name: utilisateur.lastName,
-        //         email_address: utilisateur.email
-        //     }
-        // });
-        // console.log("TestAnchor XLM Withdrawal API Response (simulated):", withdrawResponse.data);
 
         await session.commitTransaction();
         session.endSession();
@@ -472,12 +460,11 @@ exports.retraitStellarVersBancaire = async (req, res) => {
 
         res.status(200).json({
             message: `Retrait de ${montantXOFNumerique} XOF initié avec succès (simulation complète). Cela correspond à ${montantXLM} XLM retirés de votre compte Stellar.`,
-            transactionId: transactionResponse ? transactionResponse.id : "SIMULATED_ON_CHAIN_FAILURE", // Indique si la soumission on-chain a échoué
+            transactionId: transactionResponse ? transactionResponse.id : "SIMULATED_ON_CHAIN_FAILURE", 
             montantRetireXOF: montantXOFNumerique, 
             montantXLMConverti: montantXLM, 
             nouveauSoldeXLMInterne: utilisateur.solde.XLM,
             nouveauSoldeXOFInterneSimule: utilisateur.solde.XOF,
-            // anchorWithdrawalDetails: withdrawResponse.data // Retiré car l'appel est commenté
         });
 
     } catch (error) {

@@ -287,3 +287,43 @@ exports.getProfil = async (req, res) => {
         res.status(500).json({ message: "Erreur lors de la récupération du profil." });
     }
 };
+
+// --- NOUVELLE FONCTION : Récupérer les informations d'un utilisateur par numéro de compte ---
+exports.getUtilisateurByNumeroCompte = async (req, res) => {
+    try {
+        const { numeroCompte } = req.params; // Récupère le numéro de compte depuis les paramètres de l'URL
+
+        if (!numeroCompte) {
+            return res.status(400).json({ message: "Le numéro de compte est requis." });
+        }
+
+        // Recherche l'utilisateur par son numéro de compte
+        const utilisateur = await User.findOne({ numeroCompte: numeroCompte }).select('-motDePasseHache -compteStellar.cleSecrete -compteStellar.phraseDeRecuperation');
+
+        if (!utilisateur) {
+            return res.status(404).json({ message: "Aucun utilisateur trouvé avec ce numéro de compte." });
+        }
+
+        // Retourne les informations publiques de l'utilisateur
+        res.status(200).json({
+            message: "Informations utilisateur récupérées avec succès.",
+            utilisateur: {
+                _id: utilisateur._id,
+                firstName: utilisateur.firstName,
+                lastName: utilisateur.lastName,
+                numeroCompte: utilisateur.numeroCompte,
+                email: utilisateur.email, // L'email est considéré comme public pour cette recherche
+                telephone: utilisateur.telephone, // Le téléphone est considéré comme public pour cette recherche
+                pays: utilisateur.pays,
+                compteStellar: {
+                    clePublique: utilisateur.compteStellar.clePublique
+                }
+                // Vous pouvez ajouter d'autres champs jugés "publics" ici
+            }
+        });
+
+    } catch (erreur) {
+        console.error("Erreur lors de la récupération de l'utilisateur par numéro de compte :", erreur);
+        res.status(500).json({ message: "Erreur interne du serveur lors de la récupération des informations utilisateur." });
+    }
+};

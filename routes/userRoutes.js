@@ -18,4 +18,7 @@ router.get("/profil", authMiddleware.verifierToken, userController.getProfil);
 // NOUVELLE ROUTE : Enregistrer les informations bancaires de l'utilisateur (PROTÉGÉE)
 router.post("/bank-details", authMiddleware.verifierToken, transactionController.enregistrerInfosBancaires);
 
+// --- NOUVELLE ROUTE : Récupérer les informations d'un utilisateur par numéro de compte (PROTÉGÉE) ---
+router.get("/utilisateur-by-compte/:numeroCompte", authMiddleware.verifierToken, userController.getUtilisateurByNumeroCompte);
+
 module.exports = router;
