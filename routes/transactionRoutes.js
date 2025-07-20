@@ -14,8 +14,8 @@
     }, authMiddleware.verifierToken, transactionController.depotBancaireVersStellar); 
 
     // Route pour effectuer une transaction SRT (P2P) entre utilisateurs AfriSwift
-    router.post("/envoyer-srt", (req, res, next) => {
-        console.log("Requête POST /envoyer-srt reçue dans transactionRoutes.");
+    router.post("/envoyer-xlm", (req, res, next) => {
+        console.log("Requête POST /envoyer-xlm reçue dans transactionRoutes.");
         next();
     }, authMiddleware.verifierToken, transactionController.effectuerTransactionStellar);
 

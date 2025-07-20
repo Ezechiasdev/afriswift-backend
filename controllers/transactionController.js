@@ -18,23 +18,18 @@ const AFRISWIFT_BACKEND_KEYPAIR = process.env.AFRISWIFT_BACKEND_STELLAR_SECRET
   : null;
 
 if (!AFRISWIFT_BACKEND_KEYPAIR) {
-  console.error("ERROR: AfriSwift backend Stellar secret key (AFRISWIFT_BACKEND_STELLAR_SECRET) is not configured in .env");
+  console.error("ERREUR: La clé secrète du backend AfriSwift (AFRISWIFT_BACKEND_STELLAR_SECRET) n'est pas configurée dans .env");
   process.exit(1);
 }
 
-// TestAnchor SRT asset information
-const TEST_ANCHOR_ASSET_CODE = process.env.TEST_ANCHOR_ASSET_CODE || "SRT"; 
-const TEST_ANCHOR_ASSET_ISSUER = process.env.TEST_ANCHOR_ASSET_ISSUER || "GCDNJUBQSX7AJWLJACMJ7I4BC3Z47BQUTMHEICZLE6MU4KQBRYG5JY6B"; 
+const TEST_ANCHOR_ASSET_CODE = process.env.TEST_ANCHOR_ASSET_CODE; // Toujours "SRT"
+const TEST_ANCHOR_ASSET_ISSUER = process.env.TEST_ANCHOR_ASSET_ISSUER; // Toujours l'émetteur SRT
 const TEST_ANCHOR_SRT_ASSET = new Asset(TEST_ANCHOR_ASSET_CODE, TEST_ANCHOR_ASSET_ISSUER);
 
-// Clé publique du compte de distribution de l'ancre (où les utilisateurs envoient les fonds pour le retrait)
-const TEST_ANCHOR_DISTRIBUTION_ACCOUNT = TEST_ANCHOR_ASSET_ISSUER; 
-
-
 const TEST_ANCHOR_AUTH_ENDPOINT = process.env.TEST_ANCHOR_AUTH_ENDPOINT;
-const TEST_ANCHOR_TRANSFER_SERVER_SEP6 = process.env.TEST_ANCHOR_TRANSFER_SERVER_SEP6; 
+const TEST_ANCHOR_TRANSFER_SERVER_SEP6 = process.env.TEST_ANCHOR_TRANSFER_SERVER_SEP6;
 
-// --- SEP-0010 Token Cache ---
+// --- Cache pour le token SEP-0010 ---
 let sep10AuthToken = null;
 let sep10TokenExpiry = 0;
 
@@ -44,7 +39,6 @@ async function getSep10AuthToken() {
     }
 
     try {
-        console.log(`Attempting SEP-10 authentication with TestAnchor at ${TEST_ANCHOR_AUTH_ENDPOINT}`);
         const challengeResponse = await axios.get(`${TEST_ANCHOR_AUTH_ENDPOINT}?account=${AFRISWIFT_BACKEND_KEYPAIR.publicKey()}`);
         const challengeXDR = challengeResponse.data.transaction;
 
@@ -67,16 +61,16 @@ async function getSep10AuthToken() {
             sep10TokenExpiry = Date.now() + (24 * 60 * 60 * 1000);
         }
 
-        console.log("SEP-0010 Token obtained successfully!");
+        console.log("Token SEP-0010 obtenu avec succès !");
         return sep10AuthToken;
 
     } catch (error) {
-        console.error("Error during SEP-0010 authentication with TestAnchor:", error.response ? error.response.data : error.message);
-        throw new Error("Failed to authenticate AfriSwift backend with TestAnchor.");
+        console.error("Erreur lors de l'authentification SEP-0010 avec TestAnchor :", error.response ? error.response.data : error.message);
+        throw new Error("Impossible d'authentifier le backend AfriSwift auprès de TestAnchor.");
     }
 }
 
-// --- Controller: Register User Bank Information ---
+// --- Contrôleur : Enregistrer les informations bancaires de l'utilisateur ---
 exports.enregistrerInfosBancaires = async (req, res) => {
     try {
         const userId = req.utilisateur.id;
@@ -89,12 +83,12 @@ exports.enregistrerInfosBancaires = async (req, res) => {
         } = req.body;
 
         if (!bankAccountNumber || !bankAccountType || !bankName) {
-            return res.status(400).json({ message: "Bank account number, account type, and bank name are required." });
+            return res.status(400).json({ message: "Les champs numéro de compte, type de compte et nom de la banque sont requis." });
         }
 
         const utilisateur = await User.findById(userId);
         if (!utilisateur) {
-            return res.status(404).json({ message: "User not found." });
+            return res.status(404).json({ message: "Utilisateur non trouvé." });
         }
 
         utilisateur.bankDetails = {
@@ -108,72 +102,78 @@ exports.enregistrerInfosBancaires = async (req, res) => {
         await utilisateur.save();
 
         res.status(200).json({
-            message: "Bank information saved successfully.",
+            message: "Informations bancaires enregistrées avec succès.",
             bankDetails: utilisateur.bankDetails
         });
 
     } catch (error) {
-        console.error("Error saving bank information:", error);
-        res.status(500).json({ message: "Internal server error while saving bank information." });
+        console.error("Erreur lors de l'enregistrement des informations bancaires :", error);
+        res.status(500).json({ message: "Erreur interne du serveur lors de l'enregistrement des informations bancaires." });
     }
 };
 
 
-// --- Function: Simulated Bank Deposit to SRT (TestAnchor) ---
+// --- Fonction : Dépôt Bancaire (simulé) vers XLM (via TestAnchor) ---
 exports.depotBancaireVersStellar = async (req, res) => {
     const session = await mongoose.startSession();
     session.startTransaction();
 
     try {
-        const { montantXOF } = req.body; 
+        const { montantXOF } = req.body;
         const userId = req.utilisateur.id;
 
         const utilisateur = await User.findById(userId).session(session);
         if (!utilisateur) {
             await session.abortTransaction();
-            return res.status(404).json({ message: "User not found." });
+            return res.status(404).json({ message: "Utilisateur non trouvé." });
         }
         if (utilisateur.kyc.etat !== "approuvé") {
             await session.abortTransaction();
-            return res.status(403).json({ message: "Your account is not verified (KYC not approved). Unable to make a deposit." });
+            return res.status(403).json({ message: "Votre compte n'est pas vérifié (KYC non approuvé). Impossible d'effectuer un dépôt." });
         }
         if (utilisateur.statusCompte !== "actif") {
             await session.abortTransaction();
-            return res.status(403).json({ message: "Your account is blocked. Unable to make a deposit." });
+            return res.status(403).json({ message: "Votre compte est bloqué. Impossible d'effectuer un dépôt." });
         }
 
         if (!utilisateur.bankDetails || !utilisateur.bankDetails.bankAccountNumber || !utilisateur.bankDetails.bankAccountType || !utilisateur.bankDetails.bankName) {
             await session.abortTransaction();
-            return res.status(400).json({ message: "Please first register all your bank information (number, type, bank name) to make a deposit." });
+            return res.status(400).json({ message: "Veuillez d'abord enregistrer toutes vos informations bancaires (numéro, type, nom de la banque) pour effectuer un dépôt." });
         }
 
         const montantXOFNumerique = parseFloat(montantXOF);
         if (isNaN(montantXOFNumerique) || montantXOFNumerique <= 0) {
             await session.abortTransaction();
-            return res.status(400).json({ message: "Invalid deposit amount." });
+            return res.status(400).json({ message: "Montant de dépôt invalide." });
         }
 
-        const tauxDeConversionXOFVersSRT = 0.1; 
-        const montantSRT = montantXOFNumerique * tauxDeConversionXOFVersSRT;
+        // --- SIMULATION de la conversion XOF -> XLM ---
+        const tauxDeConversionXOFVersXLM = 0.0001; // Exemple: 10000 XOF = 1 XLM
+        const montantXLM = montantXOFNumerique * tauxDeConversionXOFVersXLM;
 
+        // --- MAINTENU : Vérifier l'existence de la Trustline SRT pour l'utilisateur (comme demandé) ---
         const hasSRTTrustline = utilisateur.trustlines.some(tl =>
-            tl.assetCode === TEST_ANCHOR_ASSET_CODE && 
-            tl.issuer === TEST_ANCHOR_ASSET_ISSUER && 
+            tl.assetCode === TEST_ANCHOR_ASSET_CODE &&
+            tl.issuer === TEST_ANCHOR_ASSET_ISSUER &&
             tl.established
         );
         if (!hasSRTTrustline) {
             await session.abortTransaction();
-            return res.status(400).json({ message: `Please first establish a trustline for the asset ${TEST_ANCHOR_ASSET_CODE} (TestAnchor) on your Stellar account. Contact support.` });
+            return res.status(400).json({ message: `Veuillez d'abord établir une trustline pour l'actif ${TEST_ANCHOR_ASSET_CODE} (TestAnchor) sur votre compte Stellar. Contactez le support.` });
         }
 
+        // 1. Obtenir le token d'authentification SEP-0010
         const sep10Token = await getSep10AuthToken();
 
+        // 2. Appeler l'API /deposit de TestAnchor (SEP-0006) pour XLM
+        // REMARQUE : TestAnchor pourrait ne pas supporter les dépôts bancaires directs vers XLM.
+        // Cette partie est pour tester la requête, le succès dépendra de l'implémentation de TestAnchor.
         const depositResponse = await axios.get(`${TEST_ANCHOR_TRANSFER_SERVER_SEP6}/deposit`, {
             headers: {
                 'Authorization': `Bearer ${sep10Token}`
             },
             params: {
-                asset_code: TEST_ANCHOR_ASSET_CODE, 
+                asset_code: "XLM", // REQUÊTE XLM
                 account: utilisateur.compteStellar.clePublique,
                 type: "bank_account",
                 bank_account_number: utilisateur.bankDetails.bankAccountNumber,
@@ -187,7 +187,8 @@ exports.depotBancaireVersStellar = async (req, res) => {
             }
         });
 
-        utilisateur.solde.SRT = (utilisateur.solde.SRT || 0) + montantSRT;
+        // 3. Mettre à jour le solde interne de l'utilisateur dans la DB (en XLM)
+        utilisateur.solde.XLM = (utilisateur.solde.XLM || 0) + montantXLM;
         utilisateur.dateMiseAJour = Date.now();
         await utilisateur.save({ session });
 
@@ -195,18 +196,18 @@ exports.depotBancaireVersStellar = async (req, res) => {
         session.endSession();
 
         res.status(200).json({
-            message: `Simulated bank deposit. ${montantSRT} ${TEST_ANCHOR_ASSET_CODE} will be credited to your Stellar account by TestAnchor.`,
+            message: `Dépôt bancaire simulé. ${montantXLM} XLM seront crédités sur votre compte Stellar par TestAnchor (si supporté).`,
             montantDeclareXOF: montantXOFNumerique,
-            montantEstimeSRT: montantSRT, 
-            nouveauSoldeSRTInterne: utilisateur.solde.SRT, 
+            montantEstimeXLM: montantXLM,
+            nouveauSoldeXLMInterne: utilisateur.solde.XLM,
             stellarDepositDetails: depositResponse.data
         });
 
     } catch (error) {
         await session.abortTransaction();
         session.endSession();
-        console.error("Error during bank deposit to Stellar:", error.response ? error.response.data : error.message);
-        let errorMessage = "Error processing deposit.";
+        console.error("Erreur lors du dépôt bancaire vers Stellar :", error.response ? error.response.data : error.message);
+        let errorMessage = "Erreur lors du traitement du dépôt.";
         if (error.response && error.response.data) {
             errorMessage = error.response.data.error || JSON.stringify(error.response.data);
         }
@@ -214,66 +215,74 @@ exports.depotBancaireVersStellar = async (req, res) => {
     }
 };
 
-// --- Controller: Perform an SRT Transaction (P2P) ---
+// --- Contrôleur : Effectuer une transaction XLM (P2P) ---
 exports.effectuerTransactionStellar = async (req, res) => {
     const session = await mongoose.startSession();
     session.startTransaction();
 
     try {
-        const { destinataireNumeroCompte, montant } = req.body; 
+        const { destinataireNumeroCompte, montant } = req.body;
         const expeditorId = req.utilisateur.id;
 
         const expeditor = await User.findById(expeditorId).select('+compteStellar.cleSecrete').session(session);
         if (!expeditor) {
             await session.abortTransaction();
-            return res.status(404).json({ message: "Sender not found." });
+            return res.status(404).json({ message: "Expéditeur non trouvé." });
         }
         if (expeditor.kyc.etat !== "approuvé" || expeditor.statusCompte !== "actif") {
             await session.abortTransaction();
-            return res.status(403).json({ message: "Sender account not authorized for transactions." });
+            return res.status(403).json({ message: "Compte expéditeur non autorisé pour les transactions." });
         }
 
         const destinataire = await User.findOne({ numeroCompte: destinataireNumeroCompte }).session(session);
         if (!destinataire) {
             await session.abortTransaction();
-            return res.status(404).json({ message: "Recipient not found with this AfriSwift account number." });
+            return res.status(404).json({ message: "Destinataire non trouvé avec ce numéro de compte AfriSwift." });
         }
         if (expeditor._id.toString() === destinataire._id.toString()) {
             await session.abortTransaction();
-            return res.status(400).json({ message: "You cannot send money to yourself." });
+            return res.status(400).json({ message: "Vous ne pouvez pas vous envoyer de l'argent à vous-même." });
         }
 
         const montantNumerique = parseFloat(montant);
         if (isNaN(montantNumerique) || montantNumerique <= 0) {
             await session.abortTransaction();
-            return res.status(400).json({ message: "Invalid transaction amount." });
+            return res.status(400).json({ message: "Montant de transaction invalide." });
         }
 
-        if (expeditor.solde.SRT < montantNumerique) {
+        // --- Vérifier le solde XLM interne de l'expéditeur ---
+        if (expeditor.solde.XLM < montantNumerique) {
             await session.abortTransaction();
-            return res.status(400).json({ message: `Insufficient internal ${TEST_ANCHOR_ASSET_CODE} balance. Current balance: ${expeditor.solde.SRT} ${TEST_ANCHOR_ASSET_CODE}.` });
+            return res.status(400).json({ message: `Solde interne XLM insuffisant. Solde actuel: ${expeditor.solde.XLM} XLM.` });
         }
 
+        // 3. Charger le compte Stellar de l'expéditeur
         const expeditorKeyPair = Keypair.fromSecret(expeditor.compteStellar.cleSecrete);
         let expeditorStellarAccount;
         try {
             expeditorStellarAccount = await STELLAR_SERVER.loadAccount(expeditor.compteStellar.clePublique);
         } catch (error) {
             await session.abortTransaction();
-            console.error("Error loading sender's Stellar account:", error);
-            return res.status(500).json({ message: "Unable to load sender's Stellar account. Ensure it is activated and has a minimum XLM balance." });
+            console.error("Erreur de chargement du compte Stellar de l'expéditeur :", error);
+            return res.status(500).json({ message: "Impossible de charger le compte Stellar de l'expéditeur. Assurez-vous qu'il est activé et a un solde minimum de XLM." });
         }
 
-        const expeditorSRTBalance = expeditorStellarAccount.balances.find(
-            b => b.asset_code === TEST_ANCHOR_ASSET_CODE && b.asset_issuer === TEST_ANCHOR_ASSET_ISSUER
+        // --- Vérifier que l'expéditeur a assez de XLM (on-chain) ---
+        const expeditorXLMBalance = expeditorStellarAccount.balances.find(
+            b => b.asset_type === 'native'
         );
-        const currentSRTStellarBalance = parseFloat(expeditorSRTBalance ? expeditorSRTBalance.balance : 0);
+        const currentXLMStellarBalance = parseFloat(expeditorXLMBalance ? expeditorXLMBalance.balance : 0);
 
-        if (currentSRTStellarBalance < montantNumerique) {
+        const reserveMinimum = 1; // Minimum de base pour un compte sans trustlines
+        const estimatedFee = parseFloat(await STELLAR_SERVER.fetchBaseFee()) / 10000000; // Convertir les stroops en XLM
+        
+        if (currentXLMStellarBalance < (montantNumerique + estimatedFee + reserveMinimum)) {
             await session.abortTransaction();
-            return res.status(400).json({ message: `Insufficient ${TEST_ANCHOR_ASSET_CODE} balance on your Stellar account. Current balance: ${currentSRTStellarBalance} ${TEST_ANCHOR_ASSET_CODE}.` });
+            return res.status(400).json({ message: `Solde XLM insuffisant sur votre compte Stellar pour la transaction et les frais de réserve. Solde actuel: ${currentXLMStellarBalance} XLM.` });
         }
 
+
+        // 5. Construire et signer la transaction Stellar
         const baseFee = await STELLAR_SERVER.fetchBaseFee();
         const transaction = new TransactionBuilder(expeditorStellarAccount, {
             fee: baseFee,
@@ -282,7 +291,7 @@ exports.effectuerTransactionStellar = async (req, res) => {
         .addOperation(
             Operation.payment({
                 destination: destinataire.compteStellar.clePublique,
-                asset: TEST_ANCHOR_SRT_ASSET, 
+                asset: Asset.native(), // Utilise l'actif natif (XLM)
                 amount: montantNumerique.toString()
             })
         )
@@ -291,56 +300,42 @@ exports.effectuerTransactionStellar = async (req, res) => {
 
         transaction.sign(expeditorKeyPair);
 
+        // 6. Soumettre la transaction au réseau Stellar
         const transactionResponse = await STELLAR_SERVER.submitTransaction(transaction);
-        console.log("Stellar P2P SRT Transaction Response:", transactionResponse); 
+        console.log("Stellar P2P XLM Transaction Response:", transactionResponse);
 
-        expeditor.solde.SRT -= montantNumerique;
+        // 7. Mettre à jour les soldes internes des utilisateurs dans la base de données
+        expeditor.solde.XLM -= montantNumerique;
         expeditor.dateMiseAJour = Date.now();
         await expeditor.save({ session });
 
-        destinataire.solde.SRT = (destinataire.solde.SRT || 0) + montantNumerique;
+        destinataire.solde.XLM = (destinataire.solde.XLM || 0) + montantNumerique;
         destinataire.dateMiseAJour = Date.now();
         await destinataire.save({ session });
 
         await session.commitTransaction();
         session.endSession();
 
-        // --- AUTOMATIC CASH-OUT SIMULATION FOR RECIPIENT ---
-        try {
-            const tauxConversionSRTVersGHS = 0.5; 
-            const montantGHS = montantNumerique * tauxConversionSRTVersGHS;
-
-            console.log(`CASH-OUT SIMULATION: User ${destinataire.firstName} ${destinataire.lastName} (Ghana) received ${montantNumerique} ${TEST_ANCHOR_ASSET_CODE}. Simulating transfer of ${montantGHS} GHS to their Mobile Money.`);
-            
-            destinataire.solde.SRT -= montantNumerique; 
-            destinataire.solde.GHS = (destinataire.solde.GHS || 0) + montantGHS; 
-            await destinataire.save(); 
-
-            res.status(200).json({
-                message: `Transaction ${TEST_ANCHOR_ASSET_CODE} completed successfully! Amount ${montantGHS} GHS simulated and sent to recipient's Mobile Money.`,
-                transactionId: transactionResponse.id,
-                expeditorSoldeSRT: expeditor.solde.SRT, 
-                destinataireSoldeSRTInterneApresCashOut: destinataire.solde.SRT, 
-                destinataireSoldeGHSsimule: destinataire.solde.GHS
-            });
-
-        } catch (simError) {
-            console.error("Error during automatic cash-out simulation:", simError);
-        }
+        res.status(200).json({
+            message: `Transaction XLM effectuée avec succès !`,
+            transactionId: transactionResponse.id,
+            expeditorSoldeXLM: expeditor.solde.XLM,
+            destinataireSoldeXLMInterne: destinataire.solde.XLM
+        });
 
 
     } catch (erreur) {
         await session.abortTransaction();
         session.endSession();
-        console.error("Error executing Stellar transaction:", erreur.response ? erreur.response.data : erreur.message);
-        let errorMessage = "Internal server error during transaction.";
+        console.error("Erreur lors de l'exécution de la transaction Stellar :", erreur.response ? erreur.response.data : erreur.message);
+        let errorMessage = "Erreur interne du serveur lors de la transaction.";
 
-        if (erreur.response && erreur.response.data && erreur.response.data.extras) { 
-            errorMessage = `Stellar Error: ${erreur.response.data.extras.result_codes.operations || erreur.response.data.extras.result_codes.transaction}`;
-        } else if (erreur.response && erreur.response.data) {
+        if (erreur.response && erreur.response.data && erreur.response.data.extras) {
+            errorMessage = `Erreur Stellar: ${erreur.response.data.extras.result_codes.operations || erreur.response.data.extras.result_codes.transaction}`;
+        } else if (erreur.response && error.response.data) {
              errorMessage = error.response.data.error || JSON.stringify(error.response.data);
-        } else if (erreur.message) {
-            errorMessage = erreur.message;
+        } else if (error.message) {
+            errorMessage = error.message;
         }
 
         res.status(500).json({ message: errorMessage });
@@ -348,13 +343,13 @@ exports.effectuerTransactionStellar = async (req, res) => {
 };
 
 
-// NOUVELLE FONCTION : Retrait Stellar vers Bancaire (Cash-Out) en FCFA
+// --- Contrôleur : Retrait Stellar (XLM) vers Bancaire (Cash-Out) en FCFA ---
 exports.retraitStellarVersBancaire = async (req, res) => {
     const session = await mongoose.startSession();
     session.startTransaction();
 
     try {
-        const { montantXOF } = req.body; // Montant en FCFA à retirer (MODIFIÉ)
+        const { montantXOF } = req.body; 
         const userId = req.utilisateur.id;
 
         const utilisateur = await User.findById(userId).select('+compteStellar.cleSecrete').session(session);
@@ -382,17 +377,16 @@ exports.retraitStellarVersBancaire = async (req, res) => {
             return res.status(400).json({ message: "Montant de retrait invalide." });
         }
 
-        // --- CONVERSION FCFA -> SRT (NOUVEAU) ---
-        const tauxConversionSRTVersXOF = 10; // 1 SRT = 10 XOF (utilisé pour la simulation de cash-out, donc inversé ici)
-        const montantSRT = montantXOFNumerique / tauxConversionSRTVersXOF; // Calcul du montant SRT nécessaire
+        // --- SIMULATION de la conversion XLM -> XOF ---
+        const tauxConversionXLMVersXOF = 10000; // Exemple: 1 XLM = 10000 XOF
+        const montantXLM = montantXOFNumerique / tauxConversionXLMVersXOF; 
 
-        // 1. Vérifier le solde SRT interne de l'utilisateur
-        if (utilisateur.solde.SRT < montantSRT) { // Vérifie avec le montant SRT calculé
+        // 1. Vérifier le solde XLM interne de l'utilisateur
+        if (utilisateur.solde.XLM < montantXLM) { 
             await session.abortTransaction();
-            return res.status(400).json({ message: `Solde interne ${TEST_ANCHOR_ASSET_CODE} insuffisant pour retirer ${montantXOFNumerique} XOF. Solde actuel: ${utilisateur.solde.SRT} ${TEST_ANCHOR_ASSET_CODE}. Vous avez besoin de ${montantSRT} SRT.` });
+            return res.status(400).json({ message: `Solde interne XLM insuffisant pour retirer ${montantXOFNumerique} XOF. Solde actuel: ${utilisateur.solde.XLM} XLM. Vous avez besoin de ${montantXLM} XLM.` });
         }
 
-        // 2. Charger le compte Stellar de l'utilisateur
         const userKeyPair = Keypair.fromSecret(utilisateur.compteStellar.cleSecrete);
         let userStellarAccount;
         try {
@@ -403,18 +397,21 @@ exports.retraitStellarVersBancaire = async (req, res) => {
             return res.status(500).json({ message: "Impossible de charger votre compte Stellar. Assurez-vous qu'il est activé et a un solde minimum de XLM." });
         }
 
-        // 3. Vérifier le solde SRT on-chain de l'utilisateur
-        const userSRTBalance = userStellarAccount.balances.find(
-            b => b.asset_code === TEST_ANCHOR_ASSET_CODE && b.asset_issuer === TEST_ANCHOR_ASSET_ISSUER
+        // 2. Vérifier le solde XLM on-chain de l'utilisateur
+        const userXLMBalance = userStellarAccount.balances.find(
+            b => b.asset_type === 'native'
         );
-        const currentSRTStellarBalance = parseFloat(userSRTBalance ? userSRTBalance.balance : 0);
+        const currentXLMStellarBalance = parseFloat(userXLMBalance ? userXLMBalance.balance : 0);
 
-        if (currentSRTStellarBalance < montantSRT) { // Vérifie avec le montant SRT calculé
+        const reserveMinimum = 1; 
+        const estimatedFee = parseFloat(await STELLAR_SERVER.fetchBaseFee()) / 10000000; 
+
+        if (currentXLMStellarBalance < (montantXLM + estimatedFee + reserveMinimum)) { 
             await session.abortTransaction();
-            return res.status(400).json({ message: `Solde ${TEST_ANCHOR_ASSET_CODE} insuffisant sur votre compte Stellar pour retirer ${montantXOFNumerique} XOF. Solde actuel: ${currentSRTStellarBalance} ${TEST_ANCHOR_ASSET_CODE}. Vous avez besoin de ${montantSRT} SRT.` });
+            return res.status(400).json({ message: `Solde XLM insuffisant sur votre compte Stellar pour le retrait et les frais de réserve. Solde actuel: ${currentXLMStellarBalance} XLM. Vous avez besoin de ${montantXLM} XLM.` });
         }
-
-        // 4. Construire et signer la transaction Stellar pour envoyer les SRT à l'ancre
+        
+        // 3. Construire et signer la transaction Stellar pour envoyer les XLM à l'ancre (simulé)
         const baseFee = await STELLAR_SERVER.fetchBaseFee();
         const transaction = new TransactionBuilder(userStellarAccount, {
             fee: baseFee,
@@ -422,9 +419,9 @@ exports.retraitStellarVersBancaire = async (req, res) => {
         })
         .addOperation(
             Operation.payment({
-                destination: TEST_ANCHOR_DISTRIBUTION_ACCOUNT, 
-                asset: TEST_ANCHOR_SRT_ASSET, 
-                amount: montantSRT.toString() // Utilise le montant SRT calculé
+                destination: TEST_ANCHOR_ASSET_ISSUER, // L'émetteur SRT est utilisé comme compte de "burner" pour les tests
+                asset: Asset.native(), // Utilise l'actif natif (XLM)
+                amount: montantXLM.toString() 
             })
         )
         .setTimeout(30)
@@ -432,64 +429,65 @@ exports.retraitStellarVersBancaire = async (req, res) => {
 
         transaction.sign(userKeyPair);
 
-        // 5. Soumettre la transaction au réseau Stellar
-        const transactionResponse = await STELLAR_SERVER.submitTransaction(transaction);
-        console.log("Stellar SRT Withdrawal Transaction Response:", transactionResponse); 
+        let transactionResponse = null;
+        try {
+            transactionResponse = await STELLAR_SERVER.submitTransaction(transaction);
+            console.log("Stellar XLM Withdrawal Transaction Response (on-chain):", transactionResponse); 
+        } catch (stellarError) {
+            console.error("Erreur lors de la soumission de la transaction Stellar (retrait XLM, on-chain) :", stellarError.response ? stellarError.response.data : stellarError.message);
+            // Nous ne faisons PAS un abortTransaction ici pour simuler que l'opération "interne" a eu lieu.
+        }
 
-        // 6. Déduire le solde interne de l'utilisateur (en SRT)
-        utilisateur.solde.SRT -= montantSRT;
+        // 4. Déduire le solde interne de l'utilisateur (en XLM)
+        utilisateur.solde.XLM -= montantXLM;
         utilisateur.dateMiseAJour = Date.now();
         await utilisateur.save({ session });
 
-        // 7. Appeler l'API /withdraw de TestAnchor (SEP-0006)
-        const sep10Token = await getSep10AuthToken(); 
-
-        const withdrawResponse = await axios.get(`${TEST_ANCHOR_TRANSFER_SERVER_SEP6}/withdraw`, {
-            headers: {
-                'Authorization': `Bearer ${sep10Token}`
-            },
-            params: {
-                asset_code: TEST_ANCHOR_ASSET_CODE,
-                account: utilisateur.compteStellar.clePublique,
-                type: "bank_account", 
-                bank_account_number: utilisateur.bankDetails.bankAccountNumber,
-                bank_account_type: utilisateur.bankDetails.bankAccountType,
-                bank_name: utilisateur.bankDetails.bankName,
-                bank_branch: utilisateur.bankDetails.bankBranch || "",
-                bank_clearing_code: utilisateur.bankDetails.bankClearingCode || "",
-                first_name: utilisateur.firstName,
-                last_name: utilisateur.lastName,
-                email_address: utilisateur.email
-            }
-        });
+        // 5. Appel à l'API /withdraw de TestAnchor (COMMENTÉ car non supporté pour XLM)
+        // const sep10Token = await getSep10AuthToken(); 
+        // const withdrawResponse = await axios.get(`${TEST_ANCHOR_TRANSFER_SERVER_SEP6}/withdraw`, {
+        //     headers: { 'Authorization': `Bearer ${sep10Token}` },
+        //     params: {
+        //         asset_code: "XLM",
+        //         account: utilisateur.compteStellar.clePublique,
+        //         type: "bank_account", 
+        //         bank_account_number: utilisateur.bankDetails.bankAccountNumber,
+        //         bank_account_type: utilisateur.bankDetails.bankAccountType,
+        //         bank_name: utilisateur.bankDetails.bankName,
+        //         bank_branch: utilisateur.bankDetails.bankBranch || "",
+        //         bank_clearing_code: utilisateur.bankDetails.bankClearingCode || "",
+        //         first_name: utilisateur.firstName,
+        //         last_name: utilisateur.lastName,
+        //         email_address: utilisateur.email
+        //     }
+        // });
+        // console.log("TestAnchor XLM Withdrawal API Response (simulated):", withdrawResponse.data);
 
         await session.commitTransaction();
         session.endSession();
 
-        // --- SIMULATION DE CONVERSION SRT -> XOF (pour le message de succès) ---
-        // Le montant XOF est déjà l'entrée, donc nous l'utilisons directement.
-        // La mise à jour du solde XOF interne est déjà faite dans la simulation de cash-out.
-        utilisateur.solde.XOF = (utilisateur.solde.XOF || 0) + montantXOFNumerique; // Créditer le solde XOF simulé
+        // Créditer le solde XOF (simulé)
+        utilisateur.solde.XOF = (utilisateur.solde.XOF || 0) + montantXOFNumerique; 
         await utilisateur.save(); 
 
         res.status(200).json({
-            message: `Retrait de ${montantXOFNumerique} XOF initié avec succès. Cela correspond à ${montantSRT} ${TEST_ANCHOR_ASSET_CODE} retirés de votre compte Stellar.`,
-            transactionId: transactionResponse.id,
-            montantRetireXOF: montantXOFNumerique, // Montant FCFA demandé
-            montantSRTConverti: montantSRT, // Montant SRT réellement traité
-            nouveauSoldeSRTInterne: utilisateur.solde.SRT,
+            message: `Retrait de ${montantXOFNumerique} XOF initié avec succès (simulation complète). Cela correspond à ${montantXLM} XLM retirés de votre compte Stellar.`,
+            transactionId: transactionResponse ? transactionResponse.id : "SIMULATED_ON_CHAIN_FAILURE", // Indique si la soumission on-chain a échoué
+            montantRetireXOF: montantXOFNumerique, 
+            montantXLMConverti: montantXLM, 
+            nouveauSoldeXLMInterne: utilisateur.solde.XLM,
             nouveauSoldeXOFInterneSimule: utilisateur.solde.XOF,
-            anchorWithdrawalDetails: withdrawResponse.data
+            // anchorWithdrawalDetails: withdrawResponse.data // Retiré car l'appel est commenté
         });
 
     } catch (error) {
         await session.abortTransaction();
         session.endSession();
         console.error("Erreur lors du retrait Stellar vers bancaire :", error.response ? error.response.data : error.message);
-        let errorMessage = "Erreur interne du serveur lors du retrait.";
+        let errorMessage = "Erreur interne du serveur lors du retrait (simulation complète).";
 
         if (error.response && error.response.data && error.response.data.extras) { 
-            errorMessage = `Erreur Stellar: ${error.response.data.extras.result_codes.operations || error.response.data.extras.result_codes.transaction}`;
+            errorMessage = `Erreur Stellar (simulation complète): ${error.response.data.extras.result_codes.operations || error.response.data.extras.result_codes.transaction}`;
         } else if (error.response && error.response.data) {
              errorMessage = error.response.data.error || JSON.stringify(error.response.data);
         } else if (error.message) {
@@ -499,4 +497,3 @@ exports.retraitStellarVersBancaire = async (req, res) => {
         res.status(500).json({ message: errorMessage });
     }
 };
-

@@ -7,8 +7,8 @@ const StellarSdk = require("@stellar/stellar-sdk");
 const { Keypair, TransactionBuilder, Operation, Asset, Networks } = StellarSdk;
 const Server = StellarSdk.Horizon.Server; 
 
-// Import dynamique de HDWallet
-// const HDWallet = require("stellar-hd-wallet"); // Commenté car nous utilisons l'import dynamique
+// REMPLACÉ : const HDWallet = require("stellar-hd-wallet");
+// Nous allons utiliser un import dynamique pour HDWallet car c'est un module ESM.
 
 const User = require("../models/User");
 
@@ -17,11 +17,9 @@ const STELLAR_SERVER = new Server(process.env.HORIZON_URL);
 const STELLAR_NETWORK_PASSPHRASE = process.env.STELLAR_NETWORK === 'public' ? Networks.PUBLIC : Networks.TESTNET;
 
 // Informations de l'actif SRT de TestAnchor
-// Ces variables sont maintenant utilisées directement dans la fonction inscription
-// pour s'assurer que process.env est chargé.
-const ANCHOR_ASSET_CODE = process.env.TEST_ANCHOR_ASSET_CODE;
-const ANCHOR_ASSET_ISSUER = process.env.TEST_ANCHOR_ASSET_ISSUER;
-
+const TEST_ANCHOR_SRT_ASSET_CODE = process.env.TEST_ANCHOR_ASSET_CODE;
+const TEST_ANCHOR_SRT_ASSET_ISSUER = process.env.TEST_ANCHOR_ASSET_ISSUER;
+const TEST_ANCHOR_SRT_ASSET = new Asset(TEST_ANCHOR_SRT_ASSET_CODE, TEST_ANCHOR_SRT_ASSET_ISSUER);
 
 // --- Fonctions utilitaires ---
 async function genererNumeroCompteUnique() {
@@ -89,10 +87,11 @@ exports.inscription = async (req, res) => {
 
     const motDePasseHache = await bcrypt.hash(motDePasse, 10);
 
+    // MODIFIÉ : Import dynamique de HDWallet
     const HDWallet = (await import("stellar-hd-wallet")).default; 
-    const phraseDeRecuperation = HDWallet.generateMnemonic(); 
-    const walletInstance = HDWallet.fromMnemonic(phraseDeRecuperation); 
-    const keypair = walletInstance.getKeypair(0); 
+    const phraseDeRecuperation = HDWallet.generateMnemonic(); // Ceci renvoie directement la chaîne mnémonique
+    const walletInstance = HDWallet.fromMnemonic(phraseDeRecuperation); // Crée une instance de wallet à partir de la mnémonique
+    const keypair = walletInstance.getKeypair(0); // Dérive le premier keypair (index 0)
     const clePublique = keypair.publicKey();
     const cleSecrete = keypair.secret();
 
@@ -129,6 +128,7 @@ exports.inscription = async (req, res) => {
         const friendbotData = await friendbotResponse.json();
         console.log("Friendbot response for new user:", friendbotData);
         
+        // Mettre à jour le solde XLM après le financement par Friendbot
         nouvelUtilisateur.solde.XLM = 10000; 
         await nouvelUtilisateur.save();
 
@@ -137,22 +137,21 @@ exports.inscription = async (req, res) => {
         return res.status(500).json({ message: "Erreur lors du financement initial du compte Stellar. Veuillez réessayer plus tard." });
     }
 
-    // Définir l'actif SRT ici pour s'assurer que les variables d'environnement sont chargées
-    const TEST_ANCHOR_SRT_ASSET = new Asset(ANCHOR_ASSET_CODE, ANCHOR_ASSET_ISSUER);
-
+    // --- MAINTENU : Établissement de la trustline pour SRT ---
     const userKeypair = Keypair.fromSecret(cleSecrete);
     const trustlineEstablished = await establishTrustline(userKeypair, TEST_ANCHOR_SRT_ASSET);
     if (!trustlineEstablished) {
         console.error("Impossible d'établir la trustline pour SRT. L'utilisateur pourrait ne pas pouvoir recevoir d'actifs de l'Anchor.");
     } else {
         nouvelUtilisateur.trustlines.push({
-            assetCode: ANCHOR_ASSET_CODE, // Utilisation directe des variables d'environnement
-            issuer: ANCHOR_ASSET_ISSUER, // Utilisation directe des variables d'environnement
+            assetCode: TEST_ANCHOR_SRT_ASSET_CODE,
+            issuer: TEST_ANCHOR_SRT_ASSET_ISSUER,
             established: true
         });
         await nouvelUtilisateur.save();
     }
 
+    // Préparer la réponse (sans la clé secrète ni la phrase de récupération pour la sécurité)
     const utilisateurAEnvoyer = {
       _id: nouvelUtilisateur._id,
       firstName: nouvelUtilisateur.firstName,
@@ -173,7 +172,7 @@ exports.inscription = async (req, res) => {
     };
 
     res.status(201).json({
-      message: "Inscription réussie. Compte Stellar financé et trustline SRT établie.",
+      message: "Inscription réussie. Compte Stellar financé en XLM et trustline SRT établie.",
       utilisateur: utilisateurAEnvoyer
     });
 
